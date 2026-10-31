@@ -109,10 +109,20 @@ export const app = {
     return { from: t, to: end, label: 'До кінця місяця' };
   },
   passPlan() { return this.memo('passPlan', () => ({ ...E.computePeriod(this.s, this.cal, this.hist, this.passHorizon()), label: this.passHorizon().label })); },
+  leaks() { return this.memo('leaks', () => E.findLeaks(this.s, this.cal, this.hist, { today: this.today() })); },
+  wealth() { return this.memo('wealth', () => E.wealthPlan(this.s, this.cal, this.hist, { today: this.today() })); },
+  budget() { return this.memo('budget', () => E.budgetStatus(this.s, this.cal, this.hist, { today: this.today() })); },
   insights() {
     return this.memo('insights', () => buildInsights({
       s: this.s, rec: this.rec(), month: this.month(), passPlan: this.passPlan(), bankNow: this.bank(), weekProjected: this.projWeek(), today: this.today(), cal: this.cal,
+      leaks: this.leaks(), budget: this.budget(),
     }));
+  },
+  applyPreset(key) {
+    const p = E.WEIGHT_PRESETS[key];
+    if (!p) return;
+    this.update((st) => { st.settings.weights = { ...p.w }; }, { render: false });
+    this.dirty.add(this.tab);
   },
 
   /* ───── Вкладки ───── */
@@ -159,6 +169,8 @@ export const app = {
 /* ───────── Запуск ───────── */
 function start() {
   initSheet();
+  // Зміни, зроблені в аркуші (стан ранку, пріоритети), одразу видно на екрані під ним.
+  $('#sheet').addEventListener('close', () => { if (app.dirty.has(app.tab)) app.renderActive(); });
   app.applyTheme();
   matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', () => { if (app.s.ui.theme === 'system') app.applyTheme(); });
 

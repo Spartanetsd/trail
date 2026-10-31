@@ -3,6 +3,7 @@
 
 import * as E from './engine.js';
 import { defaultSettings, defaultState, normalizeState, exportJSON, validateImport } from './store.js';
+import * as A from './assistant.js';
 
 const cases = [];
 const test = (name, fn) => cases.push({ name, fn });
@@ -262,6 +263,100 @@ test('Координати та посилання на карти', () => {
   ok(l.apple.includes('dirflg=r'));
   const sw = E.navLinks(S((s) => { s.route.swapped = true; }));
   ok(sw.google.includes(encodeURIComponent('вулиця Якова Самарського, 10, Дніпро') + '&destination='));
+});
+
+/* ── Максимальна економія (v1.1) ── */
+test('Безкоштовна стоянка: AUTO без паркування', () => {
+  const s = S((x) => { x.car.freeParkWalkMin = 10; x.weights = { ...E.WEIGHT_PRESETS.max.w }; });
+  const r = rec(s);
+  ok(r.options.some((o) => o.key === 'carfree|carfree'), 'немає варіанта');
+  eq(r.modes.auto.key, 'carfree|carfree');
+  near(r.modes.auto.cost.decision, CAR_FULL - 90, 1e-6);
+  near(r.modes.auto.minutes, 2 * (20 + 6 + 10), 1e-9);
+});
+test('Безкоштовна стоянка вимкнена (0 хв) — лише звичайне авто', () => ok(!rec(S()).options.some((o) => o.key.startsWith('carfree'))));
+test('Пресети пріоритетів', () => {
+  eq(E.presetOf(S().weights), 'balance');
+  eq(E.presetOf({ cost: 7, comfort: 1, speed: 1, reliability: 1 }), 'max');
+  eq(E.presetOf({ cost: 1, comfort: 2, speed: 3, reliability: 4 }), null);
+});
+test('«Максимум економії»: навіть утомлений у негоду — ГТ', () => {
+  const s = S((x) => { x.weights = { ...E.WEIGHT_PRESETS.max.w }; });
+  eq(rec(s, { tired: true, badWeather: true }).best.key, 'r:r1|r:r1');
+});
+test('Витоки: 5 днів авто за планом — економія й паркування', () => {
+  const cal = {};
+  for (const d of ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06']) cal[d] = { type: 'auto' };
+  const leaks = E.findLeaks(S(), cal, [], { today: '2026-11-02' });
+  const car = leaks.find((l) => l.id === 'car-days');
+  const park = leaks.find((l) => l.id === 'parking');
+  ok(car && car.monthly > 5 * (CAR_FULL - 40) - 100, 'немає витоку «авто»');
+  ok(park && Math.abs(park.monthly - 450) < 1e-6, 'паркування ≠ 450');
+  ok(leaks[0].monthly >= leaks[leaks.length - 1].monthly, 'не відсортовано');
+});
+test('Витоки: план лише ECO без проїзного — порада купити проїзний', () => {
+  const leaks = E.findLeaks(S(), {}, [], { today: '2026-11-02' });
+  ok(!leaks.some((l) => l.id === 'car-days' || l.id === 'taxi-days'));
+  const pass = leaks.find((l) => l.id === 'pass');
+  ok(pass && pass.monthly > 0, 'немає поради про проїзний');
+});
+test('Річний ефект без відсотків = 12 × місячна чиста економія', () => {
+  const w = E.wealthPlan(S(), {}, [], { today: '2026-11-02' });
+  ok(w.monthlyNet > 0);
+  near(w.year, w.monthlyNet * 12, 1e-6); near(w.five, w.monthlyNet * 60, 1e-6);
+});
+test('Складний відсоток і термін досягнення мети', () => {
+  const w0 = E.wealthPlan(S((x) => { x.bank.goalAmount = 10000; }), {}, [], { today: '2026-11-02' });
+  const w1 = E.wealthPlan(S((x) => { x.bank.goalAmount = 10000; x.bank.rate = 12; }), {}, [], { today: '2026-11-02' });
+  ok(w1.year > w0.year, 'відсотки не додають');
+  eq(w0.months, Math.ceil(10000 / w0.monthlyNet));
+  ok(w1.months <= w0.months);
+  ok(E.isDateStr(w0.eta));
+});
+test('Бюджет: факт + план, перевищення', () => {
+  const hist = [trip('2026-11-02', 40, CAR_FULL), { id: 'p', kind: 'pass', date: '2026-11-03', type: 'weekly', start: '2026-11-03', end: '2026-11-09', persons: 2, price: 200 }];
+  const b = E.budgetStatus(S((x) => { x.bank.monthlyBudget = 500; }), {}, hist, { today: '2026-11-03' });
+  near(b.spent, 240, 1e-9);
+  ok(b.planned > 0 && b.daysLeft === 20, `днів ${b.daysLeft}`);
+  near(b.forecast, b.spent + b.planned, 1e-9);
+  ok(b.over, 'мало б бути перевищення');
+});
+test('Ціна години: порада порівнює з вартістю часу', () => {
+  const s = S((x) => { x.trip.hourValue = 1000; });
+  const r = rec(s);
+  const ins = A.buildInsights({ s, rec: r, month: null, passPlan: null, bankNow: null, weekProjected: null, today: '2026-11-02', cal: {} });
+  ok(ins.some((i) => i.id === 'hour-value' && /окупається/.test(i.text)));
+});
+
+/* ── Бот: випадкові сценарії ── */
+test('Бот: 150 випадкових сценаріїв — інваріанти розрахунків', () => {
+  let seed = 20261031;
+  const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const fin = (x) => Number.isFinite(x);
+  for (let i = 0; i < 150; i++) {
+    const s = S((x) => {
+      x.trip.passengers = 1 + Math.floor(rnd() * 8);
+      x.car.distanceKm = pick([0, 7, 120]); x.car.parkingPerHour = pick([0, 15, 300]); x.car.freeParkWalkMin = pick([0, 8]);
+      x.taxi.price = pick([0, 160, 900]); x.transit.fares.tram = pick([0, 10, 40]);
+      x.transit.passes.weeklyPrice = pick([0, 100, 999]); x.transit.passes.monthlyPrice = pick([0, 410, 5000]);
+      x.transit.passes.covers = pick([[], ['tram'], ['tram', 'trolley', 'metro', 'bus']]);
+      x.transit.routes[1].enabled = rnd() < 0.5; x.transit.routes[2].enabled = rnd() < 0.5; x.transit.routes[0].enabled = rnd() < 0.8;
+      x.benefit.enabled = rnd() < 0.5; x.benefit.defaultEligible = rnd() < 0.5;
+      x.weights = pick(Object.values(E.WEIGHT_PRESETS)).w;
+    });
+    const st = { tired: rnd() < 0.3, hurry: rnd() < 0.3, badWeather: rnd() < 0.3, luggage: rnd() < 0.3, traffic: rnd() < 0.3, roundTrip: rnd() < 0.9 };
+    const r = rec(s, st, { eligible: rnd() < 0.5 });
+    for (const o of r.options) {
+      ok(fin(o.cost.decision) && o.cost.decision >= 0, 'вартість');
+      ok(o.total >= 0 && o.total <= 100, 'оцінка');
+    }
+    if (r.best) ok(r.options.every((o) => o.total <= r.best.total + 1e-9), 'найкращий не найкращий');
+    const p = E.computePeriod(s, {}, [], { from: '2026-11-01', to: E.addDays('2026-11-01', Math.floor(rnd() * 45)) });
+    const S2 = p.strategies;
+    ok(S2.optimal <= Math.min(S2.singles, S2.weekly, S2.monthly) + 1e-6, 'проїзні не оптимальні');
+    ok(Math.abs(p.days.reduce((a, d) => a + d.decision, 0) - p.totals.decision) < 1e-6 * Math.max(1, p.totals.decision), 'сума днів ≠ разом');
+  }
 });
 
 /* ── Запуск ── */

@@ -2,7 +2,7 @@
 // Економія: фактична й прогнозована (окремо), банк комфорту, цілі, графік накопичення, історія.
 
 import * as E from './engine.js';
-import { esc, icon, toast, numField, readField, setFieldMsg, setPath, getPath, fmtInput, humanDate, countUp } from './ui.js';
+import { esc, icon, toast, numField, textField, readField, setFieldMsg, setPath, getPath, fmtInput, humanDate, countUp } from './ui.js';
 import { lineChart, legendHTML, progressHTML, scoreRing } from './charts.js';
 import { openLogTrip, openPassPurchase, signed } from './sheets.js';
 
@@ -16,6 +16,11 @@ export default {
       if (!t || !root.contains(t)) return;
       const a = t.dataset.act;
       if (a === 'log') openLogTrip(app, { date: app.today(), mode: 'eco' });
+      else if (a === 'leak-go') {
+        if (t.dataset.do === 'pass') openPassPurchase(app);
+        else if (t.dataset.tab === 'savings') root.querySelector('#bank-t')?.scrollIntoView({ block: 'center' });
+        else app.go(t.dataset.tab, { anchor: t.dataset.anchor || null });
+      }
       else if (a === 'pass') openPassPurchase(app);
       else if (a === 'more') { limit += 40; this.render(app, root); }
       else if (a === 'del') {
@@ -44,7 +49,10 @@ export default {
       const r = readField(el, prev);
       if (!r) return;
       if (r.invalid) { setFieldMsg(el, 'Введіть число'); el.value = fmtInput(prev); return; }
+      if (r.corrected) setFieldMsg(el, `Виправлено до ${fmtInput(r.value)}`);
+      const keepOpen = el.closest('details')?.open;
       app.update((st) => setPath(st.settings, el.dataset.bind, r.value));
+      if (keepOpen) { const d = root.querySelector('#goals-edit'); if (d) d.open = true; }
     });
   },
   render(app, root) {
@@ -86,6 +94,8 @@ function html(app) {
     </div>
   </section>
 
+  ${leaksHTML(app)}
+
   <section class="card" aria-labelledby="bank-t">
     <h2 class="card-title" id="bank-t">Банк комфорту</h2>
     <p class="card-sub">Частина фактичної економії відкладається на таксі у важкі дні.</p>
@@ -96,14 +106,23 @@ function html(app) {
     <div id="bank-out">${bankRows(app)}</div>
   </section>
 
+  ${budgetHTML(app)}
+
   <section class="card" aria-labelledby="goals-t">
     <h2 class="card-title" id="goals-t">Цілі</h2>
     <div class="goal"><div class="row"><span>Цей тиждень</span><b>${E.fmtUAH(wNet.net)} з ${E.fmtUAH(s.bank.weeklyGoal)}</b></div>${progressHTML(wNet.net, s.bank.weeklyGoal)}<p class="hint">Прогноз до кінця тижня: ще ${signed(pw.gross * (1 - s.bank.pct / 100))} чистої економії.</p></div>
     <div class="goal"><div class="row"><span>Цей місяць</span><b>${E.fmtUAH(mNet.net)} з ${E.fmtUAH(s.bank.monthlyGoal)}</b></div>${progressHTML(mNet.net, s.bank.monthlyGoal)}<p class="hint">Прогноз до кінця місяця: ще ${signed(pm.gross * (1 - s.bank.pct / 100))} чистої економії.</p></div>
-    <div class="grid-2" style="margin-top:12px">
-      ${numField({ bind: 'bank.weeklyGoal', label: 'Мета на тиждень', value: s.bank.weeklyGoal, unit: '₴', max: 1e7, id: 'g-week' })}
-      ${numField({ bind: 'bank.monthlyGoal', label: 'Мета на місяць', value: s.bank.monthlyGoal, unit: '₴', max: 1e7, id: 'g-month' })}
-    </div>
+    ${wealthHTML(app)}
+    <details class="more" id="goals-edit"><summary>Змінити цілі</summary>
+      <div class="grid-2" style="margin-top:8px">
+        ${numField({ bind: 'bank.weeklyGoal', label: 'Мета на тиждень', value: s.bank.weeklyGoal, unit: '₴', max: 1e7, id: 'g-week' })}
+        ${numField({ bind: 'bank.monthlyGoal', label: 'Мета на місяць', value: s.bank.monthlyGoal, unit: '₴', max: 1e7, id: 'g-month' })}
+        ${textField({ bind: 'bank.goalName', label: 'Велика мета', value: s.bank.goalName, max: 60, placeholder: 'Напр., подушка безпеки', id: 'g-name' })}
+        ${numField({ bind: 'bank.goalAmount', label: 'Сума мети', value: s.bank.goalAmount, unit: '₴', max: 1e9, id: 'g-amount' })}
+        ${numField({ bind: 'bank.rate', label: 'Ставка депозиту', value: s.bank.rate, unit: '% річних', max: 100, id: 'g-rate' })}
+      </div>
+      <p class="hint">Ставку вкажіть свою — застосунок її не знає. 0 — рахувати без відсотків.</p>
+    </details>
   </section>
 
   <section class="card" aria-labelledby="line-t">
@@ -195,4 +214,69 @@ function historyHTML(app, today) {
   }
   if (list.length > limit) h += `<button type="button" class="btn block" data-act="more" style="margin-top:10px">Показати ще</button>`;
   return h;
+}
+
+// «Куди тікають гроші»: що на 30 днів уперед дасть найбільше.
+function leaksHTML(app) {
+  const leaks = app.leaks();
+  const body = leaks.length
+    ? `<ul class="leaks">${leaks.slice(0, 5).map((l) => `<li class="leak">
+        <div class="leak-head"><b>−${E.fmtUAH(l.monthly)}</b><small>за 30 днів, ≈ ${E.fmtUAH(l.yearly)} за рік</small></div>
+        <p>${esc(l.text)}</p>
+        ${l.action ? `<button type="button" class="btn small" data-act="leak-go" data-tab="${esc(l.action.tab || '')}" data-anchor="${esc(l.action.anchor || '')}" data-do="${esc(l.action.act || '')}">${esc(l.action.label)}</button>` : ''}
+      </li>`).join('')}</ul>`
+    : '<p class="small muted" style="margin-top:8px">Витоків не знайдено: за ваших налаштувань план на 30 днів уже найекономніший.</p>';
+  return `<section class="card" aria-labelledby="leaks-t">
+    <h2 class="card-title" id="leaks-t">Куди тікають гроші</h2>
+    <p class="card-sub">Наступні 30 днів за календарем. Суми — прогноз, а не зекономлені гроші, і частково перетинаються.</p>
+    ${body}
+  </section>`;
+}
+
+// Бюджет на транспорт: фактично витрачене + план на решту місяця.
+function budgetHTML(app) {
+  const s = app.s;
+  const b = app.budget();
+  const field = numField({ bind: 'bank.monthlyBudget', label: 'Бюджет на місяць', value: s.bank.monthlyBudget, unit: '₴', max: 1e7, id: 'g-budget' });
+  if (!(b.budget > 0)) {
+    return `<section class="card" aria-labelledby="budget-t"><h2 class="card-title" id="budget-t">Бюджет на транспорт</h2>
+      <p class="card-sub">Задайте ліміт — ZERO попередить, якщо план його перевищить.</p><div style="margin-top:10px">${field}</div></section>`;
+  }
+  return `<section class="card" aria-labelledby="budget-t">
+    <h2 class="card-title" id="budget-t">Бюджет на транспорт</h2>
+    <div class="goal"><div class="row"><span>Витрачено цього місяця</span><b>${E.fmtUAH(b.spent)} з ${E.fmtUAH(b.budget)}</b></div>${progressHTML(b.spent, b.budget, b.spent > b.budget ? 'fill-warn' : 'fill-blue')}</div>
+    <div style="margin-top:10px">
+      <div class="kv"><span>За планом до кінця місяця</span><b>${E.fmtUAH(b.planned)}</b></div>
+      <div class="kv total"><span>Прогноз місяця</span><b class="${b.over ? 'bad' : 'good'}">${E.fmtUAH(b.forecast)}</b></div>
+      <div class="kv"><span>Лишається в бюджеті</span><b class="${b.left < 0 ? 'bad' : ''}">${E.fmtUAH(b.left)}</b></div>
+      ${b.perDay != null ? `<div class="kv"><span>На день поїздки (${b.daysLeft})</span><b>${E.fmtUAH(b.perDay)}</b></div>` : ''}
+    </div>
+    ${b.over ? `<div class="callout warn" style="margin-top:10px">${icon('warn')}<span>План перевищує бюджет на ${E.fmtUAH(b.overBy)}. Подивіться «Куди тікають гроші» вище.</span></div>` : ''}
+    <details class="more"><summary>Змінити бюджет</summary><div style="margin-top:8px">${field}</div></details>
+  </section>`;
+}
+
+// Велика мета й річний ефект: «спершу заплати собі» та складний відсоток.
+function wealthHTML(app) {
+  const s = app.s;
+  const w = app.wealth();
+  let goal = '';
+  if (w.goal > 0) {
+    const name = s.bank.goalName || 'Велика мета';
+    let eta;
+    if (w.months === 0) eta = 'Мету досягнуто — можна ставити наступну.';
+    else if (w.tooFar) eta = 'За поточного темпу мета далі ніж за 50 років: збільште економію або розбийте мету на менші.';
+    else if (w.months == null) eta = 'За поточним планом економії немає, тож мета не наближається.';
+    else eta = `За поточним планом ≈ ${w.months} ${E.plural(w.months, ['місяць', 'місяці', 'місяців'])}, орієнтовно ${E.fmtMonthYear(w.eta)}.`;
+    goal = `<div class="goal"><div class="row"><span>${esc(name)}</span><b>${E.fmtUAH(w.have)} з ${E.fmtUAH(w.goal)}</b></div>${progressHTML(w.have, w.goal)}<p class="hint">${esc(eta)}</p></div>`;
+  }
+  const rateTxt = w.rate > 0 ? `, ${E.fmtNum(w.rate, 1)} % річних` : '';
+  return `${goal}
+    <div style="margin-top:14px">
+      <div class="kv"><span>Чиста економія на місяць</span><b class="${w.monthlyNet >= 0 ? 'good' : 'bad'}">${signed(w.monthlyNet)}</b></div>
+      <div class="kv"><span>Відкладати рік${esc(rateTxt)}</span><b>${E.fmtUAH(w.year)}</b></div>
+      <div class="kv"><span>5 років</span><b>${E.fmtUAH(w.five)}</b></div>
+      <div class="kv"><span>10 років</span><b>${E.fmtUAH(w.ten)}</b></div>
+    </div>
+    <p class="hint">Прогноз за наступні 30 днів календаря, після резерву на комфорт. Це ще не зекономлені гроші.</p>`;
 }

@@ -90,6 +90,18 @@ export const monthStart = (str) => `${str.slice(0, 8)}01`;
 export function monthEnd(str) { const d = parseDate(str); return fmtDate(new Date(d.getFullYear(), d.getMonth() + 1, 0)); }
 export const weekStart = (str) => addDays(str, -isoDow(str));
 export const weekEnd = (str) => addDays(str, 6 - isoDow(str));
+const MONTH_GEN = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
+const MONTH_NOM = ['січень', 'лютий', 'березень', 'квітень', 'травень', 'червень', 'липень', 'серпень', 'вересень', 'жовтень', 'листопад', 'грудень'];
+export const fmtDayMonth = (str) => `${Number(str.slice(8, 10))} ${MONTH_GEN[Number(str.slice(5, 7)) - 1]}`;
+export const fmtMonthYear = (str) => `${MONTH_NOM[Number(str.slice(5, 7)) - 1]} ${str.slice(0, 4)}`;
+export function addMonths(str, n) {
+  const d = parseDate(str);
+  const day = d.getDate();
+  const t = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  const last = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate();
+  t.setDate(Math.min(day, last));
+  return fmtDate(t);
+}
 export function dateRange(from, to, limit = 3700) {
   const out = [];
   if (!isDateStr(from) || !isDateStr(to) || from > to) return out;
@@ -232,14 +244,17 @@ export function taxiLeg(s, ctx) {
   };
 }
 
-export function carLeg(s, ctx) {
+// free = true — авто ставимо на безкоштовну стоянку й доходимо пішки (паркування 0 ₴, більше ходьби).
+export function carLeg(s, ctx, free = false) {
   const st = ctx.state;
   const drive = s.car.driveMin * trafficFactor(s, st, 1);
-  const walk = s.car.parkWalkMin + (st.badWeather ? 2 : 0);
-  const comfort = 76 - (st.tired ? 28 : 0) - (st.traffic ? 12 : 0) - (st.badWeather ? 4 : 0) + (st.luggage ? 4 : 0);
-  const reliability = 84 - (st.traffic ? 18 : 0) - (st.badWeather ? 6 : 0) - (st.tired ? 12 : 0);
+  const extra = free ? s.car.freeParkWalkMin || 0 : 0;
+  const walk = s.car.parkWalkMin + extra + (st.badWeather ? 2 : 0);
+  let comfort = 76 - (st.tired ? 28 : 0) - (st.traffic ? 12 : 0) - (st.badWeather ? 4 : 0) + (st.luggage ? 4 : 0);
+  comfort -= extra * ((st.badWeather ? 0.6 : 0.2) + (st.luggage ? 0.4 : 0));
+  const reliability = 84 - (st.traffic ? 18 : 0) - (st.badWeather ? 6 : 0) - (st.tired ? 12 : 0) - (extra > 0 ? 2 : 0);
   return {
-    kind: 'car', id: 'car', label: 'Авто', confirmed: true, pure: false,
+    kind: 'car', id: free ? 'carfree' : 'car', label: free ? 'Авто + безкоштовна стоянка' : 'Авто', free, confirmed: true, pure: false,
     minutes: drive + walk, walk, wait: 0, ride: drive, boardings: 0, transfers: 0,
     transitCost: 0, taxiCost: 0, cost: 0, fares: [],
     comfort: clamp(comfort, 5, 98), reliability: clamp(reliability, 5, 98),
@@ -250,7 +265,7 @@ export function carLeg(s, ctx) {
 
 // Витрати авто за день (legs = 2 туди-назад, 1 в один бік). Авто одне на компанію:
 // пальне й паркування НЕ множаться на пасажирів (лише на кількість машин, якщо людей більше за місця).
-export function carCosts(s, ctx, legs = 2) {
+export function carCosts(s, ctx, legs = 2, free = false) {
   const st = ctx.state || DEFAULT_STATE, P = s.trip.passengers;
   const veh = vehicles(P, s.car.capacity);
   const km = s.car.distanceKm * legs * veh;
@@ -258,18 +273,18 @@ export function carCosts(s, ctx, legs = 2) {
   const liters = km * (s.car.consumption / 100) * factor;
   const fuel = liters * s.car.fuelPrice;
   const wear = km * s.car.wearPerKm;
-  const parking = s.car.parkingPerHour * s.car.parkingHours * veh;
+  const parking = free ? 0 : s.car.parkingPerHour * s.car.parkingHours * veh;
   return { km, liters, fuel, wear, parking, cash: fuel + parking, economic: fuel + parking + wear, vehicles: veh };
 }
 
 /* ───────────────────────── Варіанти поїздки ───────────────────────── */
 
-const legKey = (sp) => (sp.type === 'route' ? `r:${sp.id}` : sp.type);
+const legKey = (sp) => (sp.type === 'route' ? `r:${sp.id}` : sp.type === 'car' && sp.free ? 'carfree' : sp.type);
 export const specKey = (sp) => `${legKey(sp.there)}|${sp.back ? legKey(sp.back) : '-'}`;
 
 function buildLeg(sp, s, ctx, byId) {
   if (sp.type === 'taxi') return taxiLeg(s, ctx);
-  if (sp.type === 'car') return carLeg(s, ctx);
+  if (sp.type === 'car') return carLeg(s, ctx, !!sp.free);
   const r = byId[sp.id];
   return r && r.segments.length ? transitLeg(r, s, ctx) : null;
 }
@@ -277,7 +292,7 @@ function buildLeg(sp, s, ctx, byId) {
 export function evaluateOption(spec, s, ctx, byId = routesById(s)) {
   const roundTrip = ctx.state.roundTrip !== false;
   const isCar = spec.there.type === 'car';
-  if (isCar && spec.back && spec.back.type !== 'car') return null; // авто не можна «кинути» на півдорозі
+  if (isCar && spec.back && (spec.back.type !== 'car' || !!spec.back.free !== !!spec.there.free)) return null; // авто не можна «кинути» на півдорозі
   const there = buildLeg(spec.there, s, ctx, byId);
   const back = roundTrip && spec.back ? buildLeg(spec.back, s, ctx, byId) : null;
   if (!there || (roundTrip && spec.back && !back)) return null;
@@ -285,7 +300,7 @@ export function evaluateOption(spec, s, ctx, byId = routesById(s)) {
 
   let transit = 0, taxi = 0;
   for (const l of legs) { transit += l.transitCost; taxi += l.taxiCost; }
-  const car = isCar ? carCosts(s, ctx, legs.length) : { km: 0, liters: 0, fuel: 0, wear: 0, parking: 0 };
+  const car = isCar ? carCosts(s, ctx, legs.length, !!spec.there.free) : { km: 0, liters: 0, fuel: 0, wear: 0, parking: 0 };
   const cash = transit + taxi + car.fuel + car.parking;
   const economic = cash + car.wear;
   const decision = s.car.includeWear ? economic : cash;
@@ -312,6 +327,22 @@ export function evaluateOption(spec, s, ctx, byId = routesById(s)) {
 
 export const WEIGHT_KEYS = ['cost', 'comfort', 'speed', 'reliability'];
 export const WEIGHT_LABELS = { cost: 'Економія', comfort: 'Комфорт', speed: 'Швидкість', reliability: 'Надійність' };
+
+// Готові набори пріоритетів: одне торкання замість чотирьох повзунків.
+export const WEIGHT_PRESETS = {
+  max: { label: 'Максимум економії', w: { cost: 70, comfort: 10, speed: 10, reliability: 10 } },
+  balance: { label: 'Економія й комфорт', w: { cost: 45, comfort: 25, speed: 20, reliability: 10 } },
+  comfort: { label: 'Комфорт', w: { cost: 25, comfort: 50, speed: 15, reliability: 10 } },
+  time: { label: 'Час', w: { cost: 20, comfort: 15, speed: 45, reliability: 20 } },
+};
+export function presetOf(w) {
+  const n = normalizeWeights(w);
+  for (const [k, p] of Object.entries(WEIGHT_PRESETS)) {
+    const q = normalizeWeights(p.w);
+    if (WEIGHT_KEYS.every((key) => Math.abs(n[key] - q[key]) < 0.005)) return k;
+  }
+  return null;
+}
 
 export function normalizeWeights(w) {
   const vals = WEIGHT_KEYS.map((k) => Math.max(0, toNum(w?.[k], 0)));
@@ -390,12 +421,14 @@ export function recommend(s, ctxIn = {}) {
   const enabled = s.transit.routes.filter((r) => r.enabled && r.segments.length);
   const legSpecs = [...enabled.map((r) => ({ type: 'route', id: r.id })), { type: 'taxi' }];
   const specs = [];
+  const carSpecs = [{ type: 'car' }];
+  if (s.car.freeParkWalkMin > 0) carSpecs.push({ type: 'car', free: true });
   if (roundTrip) {
     for (const a of legSpecs) for (const b of legSpecs) specs.push({ there: a, back: b });
-    specs.push({ there: { type: 'car' }, back: { type: 'car' } });
+    for (const c of carSpecs) specs.push({ there: c, back: c });
   } else {
     for (const a of legSpecs) specs.push({ there: a, back: null });
-    specs.push({ there: { type: 'car' }, back: null });
+    for (const c of carSpecs) specs.push({ there: c, back: null });
   }
   const fSpec = flexSpec(s, roundTrip, byId);
   if (fSpec && !specs.some((sp) => specKey(sp) === specKey(fSpec))) specs.push(fSpec);
@@ -411,7 +444,7 @@ export function recommend(s, ctxIn = {}) {
   const pref = s.transit.ecoRoute && s.transit.ecoRoute !== 'auto' ? s.transit.ecoRoute : null;
   modes.eco = (pref && ecoCands.find((o) => o.spec.there.id === pref)) || ecoCands.sort(byScore)[0] || null;
   modes.comfort = roundTrip && modes.eco ? find(specKey({ there: modes.eco.spec.there, back: { type: 'taxi' } })) : null;
-  modes.auto = find(roundTrip ? 'car|car' : 'car|-');
+  modes.auto = options.filter((o) => o.isCar).sort(byScore)[0] || null;
   modes.taxi = find(roundTrip ? 'taxi|taxi' : 'taxi|-');
   modes.flex = fSpec ? find(specKey(fSpec)) : null;
   const sorted = [...options].sort(byScore);
@@ -603,7 +636,7 @@ export function computePeriod(s, cal, hist, opt = {}) {
   for (const d of days) {
     Object.assign(d, { transit: 0, taxi: 0, fuel: 0, wear: 0, parking: 0, liters: 0, km: 0, minutes: 0, title: '', unavailable: false });
     if (!d.trip) continue;
-    d.eligible = opt.dayTypes ? s.benefit.enabled && s.benefit.defaultEligible : resolveEligible(d.date, s, cal);
+    d.eligible = resolveEligible(d.date, s, cal);
     d.covered = opt.assumeOwnedAll ? P : passPersonsFrom(owned, d.date, P);
     const option = specFor(d.type, d.eligible, d.covered);
     if (!option) { d.unavailable = true; d.trip = false; continue; }
@@ -756,8 +789,7 @@ export function projectedSavings(s, cal, hist, { from, to, today }) {
   if (start > to) return { gross: 0, days: 0, series: [] };
   const logged = new Set((hist || []).filter((r) => r.kind === 'trip').map((r) => r.date));
   const plan = computePeriod(s, cal, hist, { from: start, to });
-  const ctx = makeCtx({ state: DEFAULT_STATE });
-  const car = carCosts(s, ctx, 2);
+  const car = carBaseline(s);
   const base = s.bank.baseline === 'carCash' ? car.cash : car.economic;
   let gross = 0, days = 0;
   const series = [];
@@ -951,4 +983,106 @@ export function departureFor(s, option) {
   if (arrive == null || !option) return null;
   const total = option.oneWay + option.buffer;
   return { time: fmtHM(arrive - total), arrive: fmtHM(arrive), buffer: option.buffer, minutes: option.oneWay };
+}
+
+/* ───────────────────────── Максимальна економія ───────────────────────── */
+
+// Базова вартість авто для обліку економії: той варіант, який обрав би AUTO у звичайний день.
+export function carBaseline(s) {
+  const a = recommend(s, { state: { ...DEFAULT_STATE } }).modes.auto;
+  if (a) return { cash: a.cost.cash, economic: a.cost.economic, wear: a.cost.wear, title: a.title };
+  const c = carCosts(s, makeCtx(), 2);
+  return { cash: c.cash, economic: c.economic, wear: c.wear, title: 'Авто' };
+}
+
+// «Куди тікають гроші» — інверсія за Мангером: не «як заробити», а «де саме ми переплачуємо».
+// Дивимось на 30 днів уперед за календарем і рахуємо, скільки дає кожна дія.
+export function findLeaks(s, cal, hist, { today }) {
+  const from = today, to = addDays(today, 29);
+  const plan = computePeriod(s, cal, hist, { from, to });
+  const out = [];
+  const perYear = 365 / 30;
+  const ecoOk = !!recommend(s, { state: { ...DEFAULT_STATE } }).modes.eco;
+  const types = Object.fromEntries(plan.days.map((d) => [d.date, d.type]));
+  const swap = (pred) => {
+    if (!ecoOk) return null;
+    const t = { ...types };
+    let n = 0;
+    for (const d of plan.days) if (d.trip && pred(d)) { t[d.date] = 'eco'; n += 1; }
+    if (!n) return null;
+    const alt = computePeriod(s, cal, hist, { from, to, dayTypes: t });
+    if (alt.unavailable) return null;
+    return { n, saving: plan.totals.decision - alt.totals.decision };
+  };
+  // Дрібниці не показуємо: фокус лише на тому, що реально помітно в гаманці.
+  const add = (id, monthly, text, action = null, min = 20) => { if (monthly >= min) out.push({ id, monthly, yearly: monthly * perYear, text, action }); };
+  const dn = (n) => `${n} ${plural(n, ['день', 'дні', 'днів'])}`;
+  const isCarDay = (d) => typeof d.key === 'string' && d.key.startsWith('car');
+  const carDays = plan.days.filter((d) => d.trip && isCarDay(d));
+
+  const car = swap(isCarDay);
+  if (car) add('car-days', car.saving, `${dn(car.n)} на авто за планом. Якщо їхати ECO, за 30 днів залишиться на ${fmtGrn(car.saving)} більше.`, { tab: 'calendar', label: 'Змінити план' });
+  const taxi = swap((d) => d.taxi > 0);
+  if (taxi) add('taxi-days', taxi.saving, `${dn(taxi.n)} із таксі за планом ${plural(taxi.n, ['коштує', 'коштують', 'коштують'])} на ${fmtGrn(taxi.saving)} більше, ніж ECO. Залиште таксі для важких днів — їх оплачує банк комфорту.`, { tab: 'calendar', label: 'Змінити план' });
+  const parking = carDays.reduce((a, d) => a + d.parking, 0);
+  if (parking > 0 && !(s.car.freeParkWalkMin > 0)) add('parking', parking, `Паркування — ${fmtGrn(parking)} за ${dn(carDays.length)} авто. Знайдіть безкоштовне місце за кілька хвилин пішки й укажіть його в налаштуваннях авто — ця витрата зникне.`, { tab: 'settings', anchor: 'set-car', label: 'Налаштувати авто' });
+  const S = plan.strategies;
+  if (plan.purchases.length && S.singles - S.optimal >= 1) {
+    const f = plan.purchases[0];
+    add('pass', S.singles - S.optimal, `Проїзний замість разових квитків: ${fmtGrn(S.singles)} → ${fmtGrn(S.optimal)} за 30 днів. Перша купівля — ${fmtDayMonth(f.start)}.`, { tab: 'savings', act: 'pass', label: 'Записати купівлю' });
+  }
+  const mFrom = monthStart(today), mTo = monthEnd(today);
+  const ecoPaid = (hist || []).filter((r) => r.kind === 'trip' && r.mode === 'eco' && r.date >= mFrom && r.date <= mTo).reduce((a, r) => a + r.cost, 0);
+  const passBought = (hist || []).some((r) => r.kind === 'pass' && r.end >= mFrom && r.start <= mTo);
+  const monthPass = s.transit.passes.monthlyPrice * s.trip.passengers;
+  if (!passBought && monthPass > 0 && ecoPaid > monthPass) add('singles-paid', ecoPaid - monthPass, `Цього місяця на разові квитки вже витрачено ${fmtGrn(ecoPaid)}, а місячні проїзні на всіх коштували б ${fmtGrn(monthPass)}. Наступного місяця купуйте проїзний на початку.`);
+  const liters = carDays.reduce((a, d) => a + d.liters, 0);
+  if (liters > 0 && s.car.fuelPrice > 0) add('fuel', liters * 2, `Кожні 2 ₴/л знижки на пальне — мінус ${fmtGrn(liters * 2)} за 30 днів (${fmtNum(liters, 0)} л за планом). Заправляйтесь там, де дешевше, і користуйтесь знижками АЗС.`, null, 50);
+  const b = bankSummary(hist, s);
+  if (b.overspent) add('bank-over', -b.balance, `Банк комфорту перевитрачено на ${fmtGrn(-b.balance)}. Поки економія не покриє різницю, обирайте ECO.`, { tab: 'savings', label: 'Банк комфорту' });
+  return out.sort((x, y) => y.monthly - x.monthly);
+}
+
+// Річний ефект і велика мета: «спершу заплати собі» — відкладайте чисту економію щомісяця.
+export function wealthPlan(s, cal, hist, { today }) {
+  const from = today, to = addDays(today, 29);
+  const cmp = compareModes(s, cal, hist, { from, to });
+  const monthly = cmp.plan.vsCar * (30.4375 / 30);
+  const pct = clamp(s.bank.pct, 0, 100) / 100;
+  const net = monthly > 0 ? monthly * (1 - pct) : monthly;
+  const r = Math.max(0, s.bank.rate || 0) / 100 / 12;
+  const fv = (m, n) => (r > 0 ? (m * ((1 + r) ** n - 1)) / r : m * n);
+  const have = Math.max(0, bankSummary(hist, s).net);
+  const goal = s.bank.goalAmount || 0;
+  let months = null, tooFar = false;
+  if (goal > 0) {
+    const need = goal - have;
+    if (need <= 0) months = 0;
+    else if (net > 0) months = r > 0 ? Math.ceil(Math.log((need * r) / net + 1) / Math.log(1 + r)) : Math.ceil(need / net);
+    // Понад 50 років — це не план, а мрія: не показуємо фантастичних дат.
+    if (months != null && (!Number.isFinite(months) || months > 600)) { months = null; tooFar = true; }
+  }
+  return {
+    monthlyGross: monthly, monthlyNet: net, year: fv(net, 12), five: fv(net, 60), ten: fv(net, 120),
+    rate: s.bank.rate || 0, have, goal, months, tooFar, eta: months != null ? addMonths(today, months) : null, tripDays: cmp.plan.tripDays,
+  };
+}
+
+// Бюджет на транспорт (метод конвертів): факт місяця + план на решту днів.
+export function budgetStatus(s, cal, hist, { today }) {
+  const budget = s.bank.monthlyBudget || 0;
+  const from = monthStart(today), to = monthEnd(today);
+  let spent = 0;
+  for (const r of hist || []) {
+    if (r.date < from || r.date > to) continue;
+    if (r.kind === 'trip') spent += r.cost;
+    else if (r.kind === 'pass') spent += r.price || 0;
+  }
+  const logged = new Set((hist || []).filter((r) => r.kind === 'trip').map((r) => r.date));
+  const plan = computePeriod(s, cal, hist, { from: today, to });
+  let planned = 0, daysLeft = 0;
+  for (const d of plan.days) if (d.trip && !logged.has(d.date)) { planned += d.cash; daysLeft += 1; }
+  const forecast = spent + planned;
+  const left = budget - spent;
+  return { budget, spent, planned, forecast, left, daysLeft, perDay: daysLeft > 0 ? left / daysLeft : null, over: budget > 0 && forecast > budget + 0.5, overBy: forecast - budget };
 }

@@ -123,6 +123,7 @@ export function openAlternatives(app) {
     onAction: (act, el, ev, ctl) => {
       if (act === 'toggle') { const k = el.dataset.key; if (open.has(k)) open.delete(k); else open.add(k); ctl.refresh(); }
       if (act === 'nav') openNav(app);
+      if (act === 'preset') { app.applyPreset(el.dataset.k); ctl.refresh(); }
     },
   });
 }
@@ -135,7 +136,8 @@ function altsHTML(app, open) {
   items.sort((a, b) => b.opt.total - a.opt.total);
   const w = rec.weights;
   const rt = rec.ctx.state.roundTrip !== false;
-  return `<p class="muted small">Оцінка 0–100 — зважена сума чотирьох критеріїв за вашими пріоритетами з урахуванням сьогоднішнього стану. Це порівняння варіантів між собою, а не ймовірність і не прогноз.</p>
+  return `${presetChips(app)}
+  <p class="muted small">Оцінка 0–100 — зважена сума чотирьох критеріїв за вашими пріоритетами з урахуванням сьогоднішнього стану. Це порівняння варіантів між собою, а не ймовірність і не прогноз.</p>
   <div class="weights-sum" aria-hidden="true">${E.WEIGHT_KEYS.map((k) => `<span class="w-${k}" style="flex:${w[k].toFixed(3)}"></span>`).join('')}</div>
   <p class="small dim">${E.WEIGHT_KEYS.map((k) => `${E.WEIGHT_LABELS[k]} ${Math.round(w[k] * 100)} %`).join(', ')}</p>
   <ul class="rank">${items.map((it, i) => {
@@ -170,6 +172,12 @@ function altsHTML(app, open) {
   <button type="button" class="btn block" data-act="nav">${icon('map')}Відкрити маршрут у навігаторі</button>`;
 }
 const fmtPts = (v) => `${E.fmtNum(v, 1)}`;
+
+// Пресети пріоритетів — одне торкання замість чотирьох повзунків.
+export function presetChips(app) {
+  const cur = E.presetOf(app.s.weights);
+  return `<div class="chips" role="group" aria-label="Пріоритети">${Object.entries(E.WEIGHT_PRESETS).map(([k, p]) => `<button type="button" class="chip" data-act="preset" data-k="${k}" aria-pressed="${cur === k}">${esc(p.label)}</button>`).join('')}</div>`;
+}
 
 export function costRows(o) {
   const c = o.cost;
@@ -211,7 +219,8 @@ function plannedFor(app, date, mode) {
   const ctx = { state: { ...E.DEFAULT_STATE }, eligible: E.resolveEligible(date, s, app.cal), passPersons: E.passPersonsOn(date, app.hist, s.trip.passengers) };
   const rec = E.recommend(s, ctx);
   const opt = mode === 'other' ? null : rec.modes[mode];
-  const car = E.carCosts(s, E.makeCtx(), 2);
+  const a = rec.modes.auto;
+  const car = a ? { cash: a.cost.cash, economic: a.cost.economic, wear: a.cost.wear } : E.carCosts(s, E.makeCtx(), 2);
   return { opt, car, title: opt ? opt.title : 'Інше' };
 }
 

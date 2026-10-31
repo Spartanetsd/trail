@@ -120,7 +120,7 @@ function html(app) {
   const bank = app.bank();
   h += `<div class="tiles">
     <button type="button" class="tile" data-act="go" data-tab="calendar"><small>Цей тиждень</small><b>${E.fmtUAH(week.totals.decision)}</b><span>${week.tripDays} ${E.plural(week.tripDays, ['день', 'дні', 'днів'])} поїздок</span></button>
-    <button type="button" class="tile" data-act="go" data-tab="compare"><small>Економія місяця</small><b class="${month.plan.vsCar >= 0 ? 'good' : 'bad'}">${signed(month.plan.vsCar)}</b><span>план проти авто</span></button>
+    <button type="button" class="tile" data-act="go" data-tab="compare"><small>Економія місяця</small><b class="${month.plan.vsCar >= 0 ? 'good' : 'bad'}">${signed(month.plan.vsCar)}</b><span>за планом</span></button>
     <button type="button" class="tile" data-act="go" data-tab="savings"><small>Банк комфорту</small><b class="${bank.balance < 0 ? 'bad' : ''}">${E.fmtUAH(bank.balance)}</b><span>${bank.taxiTrips > 0 ? `≈ ${bank.taxiTrips} таксі` : 'на таксі'}</span></button>
   </div>`;
 

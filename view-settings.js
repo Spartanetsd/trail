@@ -4,7 +4,7 @@
 import * as E from './engine.js';
 import { exportJSON, validateImport, clearStorage, defaultState, defaultSettings, uid, APP_VERSION } from './store.js';
 import { esc, icon, numField, textField, switchRow, selectField, readField, setFieldMsg, setPath, getPath, fmtInput, toast, openSheet, closeSheet, shareOrDownload, copyText, DOW_SHORT, humanDate } from './ui.js';
-import { openPassPurchase } from './sheets.js';
+import { openPassPurchase, presetChips } from './sheets.js';
 
 let wTimer = 0;
 const SEG_OPTIONS = Object.entries(E.SEGMENT_MODES).map(([k, v]) => [k, v.label]);
@@ -155,7 +155,9 @@ function html(app) {
   <div style="margin-top:12px">${selectField({ bind: 'trip.defaultMode', label: 'Режим робочого дня в календарі', value: s.trip.defaultMode, options: E.PLAN_MODES.map((m) => [m, `${E.MODE_INFO[m].code} — ${E.MODE_INFO[m].name}`]) })}</div>
   <p class="field-label" style="margin:14px 2px 8px;font-size:13px;font-weight:600;color:var(--ink-2)">Робочі дні</p>
   ${chipSet('trip.workDays', [0, 1, 2, 3, 4, 5, 6], s.trip.workDays, (d) => DOW_SHORT[d])}
-  <div style="margin-top:8px">${switchRow({ bind: 'trip.returnDefault', label: 'Зазвичай потрібна зворотна поїздка', checked: s.trip.returnDefault })}</div></div>
+  <div style="margin-top:8px">${switchRow({ bind: 'trip.returnDefault', label: 'Зазвичай потрібна зворотна поїздка', checked: s.trip.returnDefault })}</div>
+  <div class="grid-2" style="margin-top:8px">${numField({ bind: 'trip.hourValue', label: 'Ціна вашої години', value: s.trip.hourValue, unit: '₴/год', max: 100000 })}</div>
+  <p class="hint">Необовʼязково, 0 — не враховувати. Порадник порівняє її з тим, скільки коштує година, зекономлена авто, і скаже, чи варта швидкість грошей.</p></div>
 
   <h2 class="section-title" id="set-car">Автомобіль</h2>
   <div class="card">
@@ -171,8 +173,10 @@ function html(app) {
       ${numField({ bind: 'car.parkWalkMin', label: 'Паркування й пішки', value: s.car.parkWalkMin, unit: 'хв', max: 120, assumption: true })}
       ${numField({ bind: 'car.capacity', label: 'Місць для пасажирів', value: s.car.capacity, unit: 'ос.', min: 1, max: 9, int: true })}
       ${numField({ bind: 'car.fixedMonthly', label: 'Фіксовані витрати', value: s.car.fixedMonthly, unit: '₴/міс', max: 1e6 })}
+      ${numField({ bind: 'car.freeParkWalkMin', label: 'Безкоштовна стоянка', value: s.car.freeParkWalkMin, unit: 'хв пішки', max: 60 })}
     </div>
     <p class="hint">Фіксовані витрати — страховка, ТО, стоянка біля дому. На вибір транспорту не впливають, лише на повну вартість володіння.</p>
+    <p class="hint">Безкоштовна стоянка: скільки хвилин іти від місця, де можна поставити авто без оплати. 0 — такого місця немає. Якщо є, ZERO порівнює обидва варіанти авто — паркування часто з’їдає третину вартості поїздки.</p>
     <div style="margin-top:8px">
       ${switchRow({ bind: 'car.includeWear', label: 'Враховувати знос у порівнянні', checked: s.car.includeWear, hint: 'Увімкнено — повна економічна вартість. Вимкнено — лише гроші з кишені (пальне й паркування).' })}
       ${switchRow({ bind: 'car.winter', label: 'Зимовий режим', checked: s.car.winter, hint: 'Додає зимову надбавку до витрати пального.' })}
@@ -232,9 +236,9 @@ function html(app) {
 
   <h2 class="section-title" id="set-weights">Пріоритети ZERO<small>Ваги автоматично нормуються до 100 %.</small></h2>
   <div class="card">
-    <div class="weights-sum" id="w-bar" aria-hidden="true"></div>
+    ${presetChips(app)}
+    <div class="weights-sum" id="w-bar" aria-hidden="true" style="margin-top:14px"></div>
     ${E.WEIGHT_KEYS.map((k) => `<div class="range-row"><div class="row"><label for="w-${k}"><span class="wkey w-${k}" aria-hidden="true"></span>${E.WEIGHT_LABELS[k]}</label><b id="w-out-${k}"></b></div><input id="w-${k}" type="range" min="0" max="100" step="5" value="${s.weights[k]}" data-weight="${k}" style="--p:${s.weights[k]}%"></div>`).join('')}
-    <button type="button" class="btn small ghost" data-act="w-reset" style="margin-top:8px">Повернути 45 / 25 / 20 / 10</button>
   </div>
 
   <h2 class="section-title" id="set-bank">Банк комфорту</h2>
@@ -245,6 +249,13 @@ function html(app) {
       ${numField({ bind: 'bank.monthlyGoal', label: 'Мета на місяць', value: s.bank.monthlyGoal, unit: '₴', max: 1e7 })}
     </div>
     <div style="margin-top:12px">${selectField({ bind: 'bank.baseline', label: 'Економію рахувати проти', value: s.bank.baseline, options: [['carFull', 'Авто з урахуванням зносу'], ['carCash', 'Авто: лише гроші з кишені']] })}</div>
+    <div class="grid-2" style="margin-top:12px">
+      ${numField({ bind: 'bank.monthlyBudget', label: 'Бюджет на транспорт', value: s.bank.monthlyBudget, unit: '₴/міс', max: 1e7 })}
+      ${numField({ bind: 'bank.rate', label: 'Ставка депозиту', value: s.bank.rate, unit: '%', max: 100 })}
+      ${textField({ bind: 'bank.goalName', label: 'Велика мета', value: s.bank.goalName, max: 60, placeholder: 'Подушка безпеки' })}
+      ${numField({ bind: 'bank.goalAmount', label: 'Сума мети', value: s.bank.goalAmount, unit: '₴', max: 1e9 })}
+    </div>
+    <p class="hint">0 — бюджет і відсотки не враховуються. Ставку депозиту вкажіть свою: застосунок її не знає.</p>
   </div>
 
   <h2 class="section-title" id="set-look">Вигляд</h2>
@@ -332,6 +343,7 @@ function onAction(app, root, act, t, view) {
     return;
   }
   if (act === 'w-reset') { app.update((st) => { st.settings.weights = { cost: 45, comfort: 25, speed: 20, reliability: 10 }; }, { render: false }); rerender(); return; }
+  if (act === 'preset') { app.applyPreset(t.dataset.k); rerender(); toast(`Пріоритети: ${E.WEIGHT_PRESETS[t.dataset.k].label.toLowerCase()}`); return; }
   if (act === 'theme') { app.setTheme(t.dataset.theme); return; }
   if (act === 'export') {
     const name = `mobility-zero-${app.today()}.json`;

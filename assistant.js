@@ -6,7 +6,7 @@ import { humanDate } from './ui.js';
 
 const TONE_ORDER = { warn: 0, money: 1, good: 2, info: 3 };
 
-export function buildInsights({ s, rec, month, passPlan, bankNow, weekProjected, today, cal }) {
+export function buildInsights({ s, rec, month, passPlan, bankNow, weekProjected, today, cal, leaks = [], budget = null }) {
   const out = [];
   const add = (id, tone, text, priority = 5) => out.push({ id, tone, text, priority });
   const best = rec?.best;
@@ -24,6 +24,16 @@ export function buildInsights({ s, rec, month, passPlan, bankNow, weekProjected,
     const diff = m.auto.cost.decision - best.cost.decision;
     if (best.key !== m.auto.key && diff >= 1) add('car-diff', 'money', `Сьогодні поїздка автомобілем обійдеться дорожче на ${fmtGrn(diff)}, ніж ${optName(best, m)}.`, 2);
     else if (best.key === m.auto.key && m.eco) add('car-best', 'money', `Сьогодні авто — найкращий баланс за вашими пріоритетами, хоча ECO дешевше на ${fmtGrn(m.auto.cost.decision - m.eco.cost.decision)}.`, 2);
+  }
+
+  // Найбільший «витік» грошей (проїзні й пальне мають власні поради нижче)
+  const leak = leaks.find((l) => !['pass', 'fuel'].includes(l.id));
+  if (leak) add(`leak-${leak.id}`, 'money', leak.text, 1.5);
+
+  // Бюджет на транспорт
+  if (budget && budget.budget > 0) {
+    if (budget.over) add('budget-over', 'warn', `За планом транспорт цього місяця коштуватиме ${fmtGrn(budget.forecast)} — на ${fmtGrn(budget.overBy)} більше за бюджет ${fmtGrn(budget.budget)}.`, 1);
+    else if (budget.perDay != null) add('budget-ok', 'good', `У бюджеті на транспорт лишається ${fmtGrn(budget.left)}: ≈ ${fmtGrn(budget.perDay)} на кожен запланований день поїздки.`, 6);
   }
 
   if (best) {
@@ -83,7 +93,15 @@ export function buildInsights({ s, rec, month, passPlan, bankNow, weekProjected,
   if (m.auto && m.eco) {
     const saved = m.eco.minutes - m.auto.minutes;
     const extra = m.auto.cost.decision - m.eco.cost.decision;
-    if (saved > 5 && extra > 0) add('time-price', 'info', `Авто економить ${fmtMin(saved)} на день, але кожна зекономлена година коштує ${fmtGrn(extra / (saved / 60))}.`, 5);
+    if (saved > 5 && extra > 0) {
+      const hv = s.trip.hourValue || 0;
+      if (hv > 0) {
+        const worth = hv * s.trip.passengers * (saved / 60);
+        add('hour-value', worth > extra ? 'info' : 'money', worth > extra
+          ? `З урахуванням ціни вашого часу (${fmtGrn(hv)}/год) авто окупається: ${fmtMin(saved)} у дорозі менше варті ${fmtGrn(worth)}, а доплата — ${fmtGrn(extra)}.`
+          : `Навіть з ціною вашого часу (${fmtGrn(hv)}/год) ECO вигідніше: ${fmtMin(saved)}, зекономлені авто, варті ${fmtGrn(worth)}, а доплата — ${fmtGrn(extra)}.`, 4);
+      } else add('time-price', 'info', `Авто економить ${fmtMin(saved)} на день, але кожна зекономлена година коштує ${fmtGrn(extra / (saved / 60))}.`, 5);
+    }
   }
 
   // Пільга

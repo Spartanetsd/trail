@@ -6,7 +6,7 @@ import { toNum, clamp, isDateStr, parseHM, fmtHM, PLAN_MODES, DAY_TYPES, FARE_MO
 export const STORAGE_KEY = 'mobility-zero:v1';
 export const SCHEMA = 'mobility-zero';
 export const SCHEMA_VERSION = 1;
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 /* ───────────────────────── Стартові дані ───────────────────────── */
 
@@ -40,11 +40,11 @@ export function defaultSettings() {
       b: { label: 'Самарського, 10', address: 'вулиця Якова Самарського, 10, Дніпро', coords: '', confirmed: false },
       swapped: false,
     },
-    trip: { passengers: 2, arriveBy: '08:30', returnDefault: true, defaultMode: 'zero', workDays: [0, 1, 2, 3, 4] },
+    trip: { passengers: 2, arriveBy: '08:30', returnDefault: true, defaultMode: 'zero', workDays: [0, 1, 2, 3, 4], hourValue: 0 },
     car: {
       name: 'Opel Astra H 1.6 (2006)', distanceKm: 7, consumption: 9, fuelPrice: 89.38, wearPerKm: 3,
       parkingPerHour: 15, parkingHours: 6, driveMin: 20, parkWalkMin: 6, fixedMonthly: 0, capacity: 5,
-      winter: false, winterExtraPct: 15, trafficFuelPct: 15, includeWear: true,
+      winter: false, winterExtraPct: 15, trafficFuelPct: 15, includeWear: true, freeParkWalkMin: 0,
     },
     taxi: { price: 160, waitMin: 7, rideMin: 20, capacity: 4 },
     transit: {
@@ -56,7 +56,7 @@ export function defaultSettings() {
     flex: { there: 'taxi', back: 'r1' },
     benefit: { enabled: false, persons: 2, modes: ['tram', 'trolley', 'metro', 'bus'], defaultEligible: false },
     weights: { cost: 45, comfort: 25, speed: 20, reliability: 10 },
-    bank: { pct: 30, weeklyGoal: 700, monthlyGoal: 3000, baseline: 'carFull' },
+    bank: { pct: 30, weeklyGoal: 700, monthlyGoal: 3000, baseline: 'carFull', monthlyBudget: 0, rate: 0, goalName: '', goalAmount: 0 },
     misc: { trafficFactor: 1.6, ptSlowPct: 0 },
     ui: { theme: 'dark' },
   };
@@ -87,11 +87,11 @@ const DAYS = () => ({ t: 'days' });
 const POINT = { label: S(60), address: S(200), coords: S(60), confirmed: B() };
 const SETTINGS_SCHEMA = {
   route: { a: POINT, b: POINT, swapped: B() },
-  trip: { passengers: N(1, 8, true), arriveBy: TIME(), returnDefault: B(), defaultMode: E(PLAN_MODES), workDays: DAYS() },
+  trip: { passengers: N(1, 8, true), arriveBy: TIME(), returnDefault: B(), defaultMode: E(PLAN_MODES), workDays: DAYS(), hourValue: N(0, 100000) },
   car: {
     name: S(60), distanceKm: N(0, 500), consumption: N(0, 40), fuelPrice: N(0, 1000), wearPerKm: N(0, 100),
     parkingPerHour: N(0, 2000), parkingHours: N(0, 24), driveMin: N(1, 600), parkWalkMin: N(0, 120),
-    fixedMonthly: N(0, 1e6), capacity: N(1, 9, true), winter: B(), winterExtraPct: N(0, 100), trafficFuelPct: N(0, 100), includeWear: B(),
+    fixedMonthly: N(0, 1e6), capacity: N(1, 9, true), winter: B(), winterExtraPct: N(0, 100), trafficFuelPct: N(0, 100), includeWear: B(), freeParkWalkMin: N(0, 60),
   },
   taxi: { price: N(0, 20000), waitMin: N(0, 120), rideMin: N(1, 600), capacity: N(1, 8, true) },
   transit: {
@@ -103,7 +103,7 @@ const SETTINGS_SCHEMA = {
   flex: { there: S(40), back: S(40) },
   benefit: { enabled: B(), persons: N(0, 8, true), modes: SET(FARE_MODES), defaultEligible: B() },
   weights: { cost: N(0, 100), comfort: N(0, 100), speed: N(0, 100), reliability: N(0, 100) },
-  bank: { pct: N(0, 100), weeklyGoal: N(0, 1e7), monthlyGoal: N(0, 1e7), baseline: E(['carFull', 'carCash']) },
+  bank: { pct: N(0, 100), weeklyGoal: N(0, 1e7), monthlyGoal: N(0, 1e7), baseline: E(['carFull', 'carCash']), monthlyBudget: N(0, 1e7), rate: N(0, 100), goalName: S(60), goalAmount: N(0, 1e9) },
   misc: { trafficFactor: N(1, 4), ptSlowPct: N(0, 300) },
   ui: { theme: E(['dark', 'light', 'system']) },
 };
