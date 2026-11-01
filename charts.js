@@ -1,4 +1,4 @@
-// MOBILITY ZERO — charts.js
+// MOBILITY TRAIL — charts.js
 // Легкі SVG/HTML-графіки без бібліотек: лінії з перехрестям, сегментована смуга, матриця, теплова карта.
 
 import { fmtNum, fmtUAH, clamp } from './engine.js';
@@ -156,7 +156,7 @@ export function barsHTML(items, { fmt = fmtUAH, action = 'mode-detail' } = {}) {
   return `<div class="bars" role="list">${items.map((it) => {
     const w = Math.max(1.5, (it.value / max) * 100);
     return `<button type="button" class="bar-row" role="listitem" data-act="${action}" data-mode="${esc(it.key)}" aria-label="${esc(`${it.label}: ${fmt(it.value)}`)}">
-      <span class="bar-lbl"><b>${esc(it.label)}</b>${it.badge ? `<em class="badge-zero">${esc(it.badge)}</em>` : ''}<small>${esc(it.sub || '')}</small></span>
+      <span class="bar-lbl"><b>${esc(it.label)}</b>${it.badge ? `<em class="badge-best">${esc(it.badge)}</em>` : ''}<small>${esc(it.sub || '')}</small></span>
       <span class="bar-track"><span class="bar-fill ${it.cls}" style="width:${w.toFixed(2)}%"></span></span>
       <span class="bar-val">${esc(fmt(it.value))}</span>
     </button>`;

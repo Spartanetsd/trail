@@ -1,4 +1,4 @@
-// MOBILITY ZERO — assistant.js
+// MOBILITY TRAIL — assistant.js
 // Локальний порадник на правилах. Кожна порада — результат обчислень із поточних налаштувань.
 
 import { fmtGrn, fmtMin, fmtNum, plural, optName, SEGMENT_MODES, addDays, weekStart, resolveDayType, PLAN_MODES, carCosts, makeCtx, vehicles, departureFor, isCoverable, stopAdvice, adviceText, joinOr, taxiTariffTip } from './engine.js';

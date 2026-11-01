@@ -1,4 +1,4 @@
-// MOBILITY ZERO — view-settings.js
+// MOBILITY TRAIL — view-settings.js
 // Налаштування: адреси, поїздки, авто, таксі, ГТ і маршрути, проїзні, пільга, пріоритети, банк, тема, дані.
 
 import * as E from './engine.js';
@@ -208,7 +208,7 @@ function html(app) {
       ${numField({ bind: 'car.freeParkWalkMin', label: 'Безкоштовна стоянка', value: s.car.freeParkWalkMin, unit: 'хв пішки', max: 60 })}
     </div>
     <p class="hint">Фіксовані витрати — страховка, ТО, стоянка біля дому. На вибір транспорту не впливають, лише на повну вартість володіння.</p>
-    <p class="hint">Безкоштовна стоянка: скільки хвилин іти від місця, де можна поставити авто без оплати. 0 — такого місця немає. Якщо є, ZERO порівнює обидва варіанти авто — паркування часто з’їдає третину вартості поїздки.</p>
+    <p class="hint">Безкоштовна стоянка: скільки хвилин іти від місця, де можна поставити авто без оплати. 0 — такого місця немає. Якщо є, застосунок порівнює обидва варіанти авто — паркування часто з’їдає третину вартості поїздки.</p>
     <div style="margin-top:8px">
       ${switchRow({ bind: 'car.includeWear', label: 'Враховувати знос у порівнянні', checked: s.car.includeWear, hint: 'Увімкнено — повна економічна вартість. Вимкнено — лише гроші з кишені (пальне й паркування).' })}
       ${switchRow({ bind: 'car.winter', label: 'Зимовий режим', checked: s.car.winter, hint: 'Додає зимову надбавку до витрати пального.' })}
@@ -261,7 +261,7 @@ function html(app) {
   ${chipSet('transit.passes.covers', fareModes, s.transit.passes.covers, modeLabel)}
   <p class="hint">Посадки з окремою ціною в маршруті (напр., Ретро 15 ₴) проїзний не покриває — так обережніше.</p>
   <div class="card-title" style="margin-top:18px">Куплені проїзні</div>
-  ${passes.length ? passes.map((p) => `<div class="hist-item"><span class="mode-badge s-zero">${p.type === 'weekly' ? 'ТИЖД.' : 'МІС.'}</span><div class="hist-main"><b>${humanDate(p.start)} – ${humanDate(p.end)}</b><small>${p.persons} ${E.plural(p.persons, ['особа', 'особи', 'осіб'])}</small></div><div class="hist-amt">${E.fmtUAH(p.price)}</div><button type="button" class="icon-btn" data-act="pass-del" data-id="${esc(p.id)}" aria-label="Видалити проїзний">${icon('trash')}</button></div>`).join('') : '<p class="small muted" style="margin-top:6px">Немає. Додайте купівлю — поїздки в період дії рахуватимуться як оплачені.</p>'}
+  ${passes.length ? passes.map((p) => `<div class="hist-item"><span class="mode-badge s-best">${p.type === 'weekly' ? 'ТИЖД.' : 'МІС.'}</span><div class="hist-main"><b>${humanDate(p.start)} – ${humanDate(p.end)}</b><small>${p.persons} ${E.plural(p.persons, ['особа', 'особи', 'осіб'])}</small></div><div class="hist-amt">${E.fmtUAH(p.price)}</div><button type="button" class="icon-btn" data-act="pass-del" data-id="${esc(p.id)}" aria-label="Видалити проїзний">${icon('trash')}</button></div>`).join('') : '<p class="small muted" style="margin-top:6px">Немає. Додайте купівлю — поїздки в період дії рахуватимуться як оплачені.</p>'}
   <button type="button" class="btn small" data-act="pass-add" style="margin-top:10px">${icon('plus')}Додати купівлю</button></div>
 
   <h2 class="section-title" id="set-benefit">Пільговий проїзд</h2>
@@ -274,7 +274,7 @@ function html(app) {
     <p class="note-box">За текстом Закону України «Про Національну поліцію» (ст. 62, ч. 10, п. 7) поліцейський під час виконання поліцейських повноважень безоплатно користується громадським транспортом міського, приміського й місцевого сполучення, крім таксі. Застосунок умов не перевіряє і не радить, коли пільга застосовна. Чинну редакцію перевіряйте на zakon.rada.gov.ua.</p>
   </div>
 
-  <h2 class="section-title" id="set-weights">Пріоритети ZERO<small>Ваги автоматично нормуються до 100 %.</small></h2>
+  <h2 class="section-title" id="set-weights">Пріоритети<small>Ваги автоматично нормуються до 100 %.</small></h2>
   <div class="card">
     ${presetChips(app)}
     <div class="weights-sum" id="w-bar" aria-hidden="true" style="margin-top:14px"></div>
@@ -308,7 +308,7 @@ function html(app) {
     <p class="small muted">${dataSummary(app, passes.length)} Усе лежить лише в цьому браузері.</p>
     ${isIOS() ? (isStandalone()
       ? `<div class="callout">${icon('check')}<span>Відкрито як застосунок з початкового екрана: дані зберігаються, доки ви їх не видалите.</span></div>`
-      : `<div class="callout warn">${icon('warn')}<span>Відкрито в Safari. Safari стирає дані сайтів, які не відкривали 7 днів. Додайте ZERO на початковий екран («Поділитися» → «На початковий екран», рос. «На экран „Домой“»). Дані з вкладки туди не переносяться: зробіть тут «Експорт JSON», а в застосунку — «Імпорт з файлу».</span></div>`) : ''}
+      : `<div class="callout warn">${icon('warn')}<span>Відкрито в Safari. Safari стирає дані сайтів, які не відкривали 7 днів. Додайте TRAIL на початковий екран («Поділитися» → «На початковий екран», рос. «На экран „Домой“»). Дані з вкладки туди не переносяться: зробіть тут «Експорт JSON», а в застосунку — «Імпорт з файлу».</span></div>`) : ''}
     <div class="row wrap"><button type="button" class="btn primary" data-act="export">${icon('download')}Експорт JSON</button><button type="button" class="btn" data-act="copy">${icon('copy')}Копіювати</button></div>
     <div class="row wrap"><label class="btn" for="import-file">${icon('upload')}Імпорт з файлу</label><input id="import-file" type="file" ${isIOS() ? '' : 'accept="application/json,.json"'} hidden><button type="button" class="btn" data-act="paste">Вставити текст</button></div>
     <div class="row wrap"><button type="button" class="btn ghost" data-act="reset-settings">Скинути налаштування</button><button type="button" class="btn danger" data-act="wipe">${icon('trash')}Видалити всі дані</button></div>
@@ -318,7 +318,7 @@ function html(app) {
   <div class="card">
     <div class="kv"><span>Версія</span><b>${APP_VERSION}</b></div>
     <div class="kv"><span>Перевірка формул</span><b><a href="tests.html" target="_blank" rel="noopener">Відкрити тести</a></b></div>
-    <p class="note-box">MOBILITY ZERO рахує все локально, без сервера й платних сервісів. Живих розкладів, заторів, GPS чи тарифів він не отримує — лише ваші значення. Оцінка 0–100 порівнює варіанти за вашими пріоритетами і не є ймовірністю.</p>
+    <p class="note-box">MOBILITY TRAIL рахує все локально, без сервера й платних сервісів. Живих розкладів, заторів, GPS чи тарифів він не отримує — лише ваші значення. Оцінка 0–100 порівнює варіанти за вашими пріоритетами і не є ймовірністю.</p>
   </div>`;
 }
 
@@ -421,7 +421,7 @@ function onAction(app, root, act, t, view) {
   if (act === 'preset') { app.applyPreset(t.dataset.k); rerender(); toast(`Пріоритети: ${E.WEIGHT_PRESETS[t.dataset.k].label.toLowerCase()}`); return; }
   if (act === 'theme') { app.setTheme(t.dataset.theme); return; }
   if (act === 'export') {
-    const name = `mobility-zero-${app.today()}.json`;
+    const name = `mobility-trail-${app.today()}.json`;
     shareOrDownload(name, exportJSON(app.state)).then((r) => {
       if (r === 'cancelled') return;
       const msg = { shared: 'Резервну копію передано', downloaded: `Файл ${name} збережено`, copied: 'Копію скопійовано як текст — вставте її в Нотатки або Файли', failed: 'Не вдалося експортувати — спробуйте «Копіювати»' }[r];

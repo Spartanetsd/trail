@@ -1,4 +1,4 @@
-// MOBILITY ZERO — view-home.js
+// MOBILITY TRAIL — view-home.js
 // Головна: «проїзний квиток дня» з рекомендацією, ранковий вибір, ключові цифри й порадник.
 
 import * as E from './engine.js';
@@ -27,7 +27,7 @@ export default {
       } else if (act === 'morning') openMorning(app);
       else if (act === 'alts') openAlternatives(app);
       else if (act === 'route' || act === 'nav') openRoute(app);
-      else if (act === 'log') { const r = app.rec(); openLogTrip(app, { date: app.today(), mode: modeOf(r, r.best) === 'zero' ? 'eco' : modeOf(r, r.best) }); }
+      else if (act === 'log') { const r = app.rec(); openLogTrip(app, { date: app.today(), mode: modeOf(r, r.best) === 'best' ? 'eco' : modeOf(r, r.best) }); }
       else if (act === 'go') app.go(t.dataset.tab, { anchor: t.dataset.anchor || null });
       else if (act === 'a2hs-hide') { deviceFlag('a2hs-hidden', true); t.closest('.a2hs')?.remove(); }
     });
@@ -56,7 +56,7 @@ function html(app) {
   const loggedToday = app.hist.some((r) => r.kind === 'trip' && r.date === today);
 
   let h = `<header class="topline">
-    <div><div class="wordmark">MOBILITY ZERO</div><p class="tagline">Твоя свобода пересування</p></div>
+    <div><div class="wordmark">MOBILITY TRAIL</div><p class="tagline">Твоя свобода пересування</p></div>
     <button type="button" class="icon-btn" data-act="theme" aria-label="${theme === 'light' ? 'Увімкнути темну тему' : 'Увімкнути світлу тему'}">${icon(theme === 'light' ? 'moon' : 'sun')}</button>
   </header>
   <div class="route-pill">
@@ -131,14 +131,14 @@ function html(app) {
   const tips = app.insights().filter((t) => t.id !== 'depart').slice(0, 3);
   if (tips.length) {
     h += `<section class="card" aria-labelledby="tips-title">
-      <div class="card-head"><h2 class="card-title" id="tips-title">Порадник ZERO</h2><button type="button" class="link-btn" data-act="go" data-tab="compare" data-anchor="cmp-tips">Усі поради</button></div>
+      <div class="card-head"><h2 class="card-title" id="tips-title">Порадник</h2><button type="button" class="link-btn" data-act="go" data-tab="compare" data-anchor="cmp-tips">Усі поради</button></div>
       <ul class="insights">${tips.map((t) => `<li class="insight" data-tone="${t.tone}">${icon(TONE_ICON[t.tone])}<span>${esc(t.text)}</span></li>`).join('')}</ul>
     </section>`;
   }
 
   // Safari на iPhone: одноразова підказка встановити на початковий екран (дані не зітруться, працює як застосунок).
   if (isIOS() && !isStandalone() && !deviceFlag('a2hs-hidden')) {
-    h += `<div class="callout a2hs" style="margin-bottom:12px">${icon('plus')}<span><b>Додайте ZERO на початковий екран</b> — на весь екран, офлайн, і дані не зітруться. «Поділитися» → «На початковий екран» (рос. «На экран „Домой“»). <button type="button" class="link-btn" data-act="a2hs-hide">Сховати</button></span></div>`;
+    h += `<div class="callout a2hs" style="margin-bottom:12px">${icon('plus')}<span><b>Додайте TRAIL на початковий екран</b> — на весь екран, офлайн, і дані не зітруться. «Поділитися» → «На початковий екран» (рос. «На экран „Домой“»). <button type="button" class="link-btn" data-act="a2hs-hide">Сховати</button></span></div>`;
   }
   h += `<section class="card"><div class="today-strip">
     <div><small class="dim">${esc(humanDate(today, true))}</small><br><b>За планом: ${esc(E.MODE_INFO[type].name)}</b>${loggedToday ? '<br><small class="good">Поїздку вже записано</small>' : ''}</div>

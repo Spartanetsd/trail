@@ -1,4 +1,4 @@
-// MOBILITY ZERO — view-calendar.js
+// MOBILITY TRAIL — view-calendar.js
 // Календар транспортних рішень: типи днів, пензель, робочі блоки, теплова карта, проїзні за планом.
 
 import * as E from './engine.js';
@@ -7,8 +7,8 @@ import { heatColor } from './charts.js';
 import { openLogTrip, purchasesHTML, signed, badge } from './sheets.js';
 
 const cv = { offset: 0, brush: null, heat: false };
-const CELL_CODE = { eco: 'ECO', comfort: 'COMF', auto: 'AUTO', taxi: 'TAXI', flex: 'FLEX', zero: 'ZERO', off: 'вих.', away: 'поза' };
-const TYPE_ORDER = ['eco', 'comfort', 'auto', 'taxi', 'flex', 'zero', 'off', 'away'];
+const CELL_CODE = { eco: 'ECO', comfort: 'COMF', auto: 'AUTO', taxi: 'TAXI', flex: 'FLEX', best: 'BEST', off: 'вих.', away: 'поза' };
+const TYPE_ORDER = ['eco', 'comfort', 'auto', 'taxi', 'flex', 'best', 'off', 'away'];
 
 function shownMonth(app) {
   const d = E.parseDate(E.monthStart(app.today()));
@@ -138,7 +138,7 @@ function openDay(app, date) {
           <p class="hint">Для одного дня без урахування проїзних, які окупаються лише на кількох днях.</p>` : `<p class="muted">У цей день поїздок не заплановано.</p>`}
       </div>
       <div class="card flat"><div class="card-title">Фактичні записи</div>
-        ${recs.length ? recs.map((r) => `<div class="hist-item"><span class="mode-badge s-${r.kind === 'pass' ? 'zero' : r.mode}">${r.kind === 'pass' ? 'ПРОЇЗНИЙ' : esc(E.MODE_INFO[r.mode]?.code || 'ІНШЕ')}</span><div class="hist-main"><b>${esc(r.kind === 'pass' ? `${r.type === 'weekly' ? 'Тижневий' : 'Місячний'} × ${r.persons}` : r.label || 'Поїздка')}</b><small>${r.kind === 'trip' && r.fromBank ? 'з банку комфорту' : r.note ? esc(r.note) : ''}</small></div><div class="hist-amt">${E.fmtUAH(r.kind === 'pass' ? r.price : r.cost, 2)}</div><button type="button" class="icon-btn" data-act="del" data-id="${esc(r.id)}" aria-label="Видалити запис">${icon('trash')}</button></div>`).join('') : '<p class="small muted" style="margin-top:6px">Ще немає записів за цей день.</p>'}
+        ${recs.length ? recs.map((r) => `<div class="hist-item"><span class="mode-badge s-${r.kind === 'pass' ? 'best' : r.mode}">${r.kind === 'pass' ? 'ПРОЇЗНИЙ' : esc(E.MODE_INFO[r.mode]?.code || 'ІНШЕ')}</span><div class="hist-main"><b>${esc(r.kind === 'pass' ? `${r.type === 'weekly' ? 'Тижневий' : 'Місячний'} × ${r.persons}` : r.label || 'Поїздка')}</b><small>${r.kind === 'trip' && r.fromBank ? 'з банку комфорту' : r.note ? esc(r.note) : ''}</small></div><div class="hist-amt">${E.fmtUAH(r.kind === 'pass' ? r.price : r.cost, 2)}</div><button type="button" class="icon-btn" data-act="del" data-id="${esc(r.id)}" aria-label="Видалити запис">${icon('trash')}</button></div>`).join('') : '<p class="small muted" style="margin-top:6px">Ще немає записів за цей день.</p>'}
       </div>
       <button type="button" class="btn primary block" data-act="log">${icon('plus')}Записати фактичну поїздку</button>`;
     },

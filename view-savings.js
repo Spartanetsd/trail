@@ -1,4 +1,4 @@
-// MOBILITY ZERO — view-savings.js
+// MOBILITY TRAIL — view-savings.js
 // Економія: фактична й прогнозована (окремо), банк комфорту, цілі, графік накопичення, історія.
 
 import * as E from './engine.js';
@@ -23,8 +23,8 @@ export default {
           const r = app.s.transit.routes.find((x) => x.id === id);
           if (!r) return;
           const prev = { eco: app.s.transit.ecoRoute, mode: app.s.trip.defaultMode };
-          app.update((st) => { st.settings.transit.ecoRoute = id; if (st.settings.trip.defaultMode === 'zero') st.settings.trip.defaultMode = 'eco'; });
-          toast(`ECO — «${r.name}»${prev.mode === 'zero' ? '; робочі дні в календарі — ECO' : ''}`, { action: 'Повернути', onAction: () => app.update((st) => { st.settings.transit.ecoRoute = prev.eco; st.settings.trip.defaultMode = prev.mode; }) });
+          app.update((st) => { st.settings.transit.ecoRoute = id; if (st.settings.trip.defaultMode === 'best') st.settings.trip.defaultMode = 'eco'; });
+          toast(`ECO — «${r.name}»${prev.mode === 'best' ? '; робочі дні в календарі — ECO' : ''}`, { action: 'Повернути', onAction: () => app.update((st) => { st.settings.transit.ecoRoute = prev.eco; st.settings.trip.defaultMode = prev.mode; }) });
         }
         else if (t.dataset.tab === 'savings') root.querySelector('#bank-t')?.scrollIntoView({ block: 'center' });
         else app.go(t.dataset.tab, { anchor: t.dataset.anchor || null });
@@ -214,10 +214,10 @@ function historyHTML(app, today) {
   for (const r of list.slice(0, limit)) {
     if (r.date !== lastDate) { h += `<p class="hist-day">${esc(humanDate(r.date, true))}${r.date === today ? ', сьогодні' : ''}</p>`; lastDate = r.date; }
     if (r.kind === 'pass') {
-      h += `<div class="hist-item"><span class="mode-badge s-zero">ПРОЇЗНИЙ</span><div class="hist-main"><b>${r.type === 'weekly' ? 'Тижневий' : 'Місячний'} × ${r.persons}</b><small>${humanDate(r.start)} – ${humanDate(r.end)}</small></div><div class="hist-amt">${E.fmtUAH(r.price, 2)}<small class="bad">−${E.fmtUAH(r.price)}</small></div><button type="button" class="icon-btn" data-act="del" data-id="${esc(r.id)}" aria-label="Видалити запис">${icon('trash')}</button></div>`;
+      h += `<div class="hist-item"><span class="mode-badge s-best">ПРОЇЗНИЙ</span><div class="hist-main"><b>${r.type === 'weekly' ? 'Тижневий' : 'Місячний'} × ${r.persons}</b><small>${humanDate(r.start)} – ${humanDate(r.end)}</small></div><div class="hist-amt">${E.fmtUAH(r.price, 2)}<small class="bad">−${E.fmtUAH(r.price)}</small></div><button type="button" class="icon-btn" data-act="del" data-id="${esc(r.id)}" aria-label="Видалити запис">${icon('trash')}</button></div>`;
     } else {
       const sv = E.recordSavings(r, s.bank.baseline);
-      h += `<div class="hist-item"><span class="mode-badge s-${r.mode === 'other' ? 'zero' : r.mode}">${esc(E.MODE_INFO[r.mode]?.code || 'ІНШЕ')}</span><div class="hist-main"><b>${esc(r.label || 'Поїздка')}</b><small>${r.fromBank ? 'з банку комфорту' : esc(r.note || (r.minutes ? E.fmtMin(r.minutes) : ''))}</small></div><div class="hist-amt">${E.fmtUAH(r.cost, 2)}<small class="${r.fromBank ? '' : sv >= 0 ? 'good' : 'bad'}">${r.fromBank ? 'банк' : signed(sv)}</small></div><button type="button" class="icon-btn" data-act="del" data-id="${esc(r.id)}" aria-label="Видалити запис">${icon('trash')}</button></div>`;
+      h += `<div class="hist-item"><span class="mode-badge s-${r.mode === 'other' ? 'best' : r.mode}">${esc(E.MODE_INFO[r.mode]?.code || 'ІНШЕ')}</span><div class="hist-main"><b>${esc(r.label || 'Поїздка')}</b><small>${r.fromBank ? 'з банку комфорту' : esc(r.note || (r.minutes ? E.fmtMin(r.minutes) : ''))}</small></div><div class="hist-amt">${E.fmtUAH(r.cost, 2)}<small class="${r.fromBank ? '' : sv >= 0 ? 'good' : 'bad'}">${r.fromBank ? 'банк' : signed(sv)}</small></div><button type="button" class="icon-btn" data-act="del" data-id="${esc(r.id)}" aria-label="Видалити запис">${icon('trash')}</button></div>`;
     }
   }
   if (list.length > limit) h += `<button type="button" class="btn block" data-act="more" style="margin-top:10px">Показати ще</button>`;
@@ -248,7 +248,7 @@ function budgetHTML(app) {
   const field = numField({ bind: 'bank.monthlyBudget', label: 'Бюджет на місяць', value: s.bank.monthlyBudget, unit: '₴', max: 1e7, id: 'g-budget' });
   if (!(b.budget > 0)) {
     return `<section class="card" aria-labelledby="budget-t"><h2 class="card-title" id="budget-t">Бюджет на транспорт</h2>
-      <p class="card-sub">Задайте ліміт — ZERO попередить, якщо план його перевищить.</p><div style="margin-top:10px">${field}</div></section>`;
+      <p class="card-sub">Задайте ліміт — застосунок попередить, якщо план його перевищить.</p><div style="margin-top:10px">${field}</div></section>`;
   }
   return `<section class="card" aria-labelledby="budget-t">
     <h2 class="card-title" id="budget-t">Бюджет на транспорт</h2>

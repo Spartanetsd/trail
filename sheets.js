@@ -1,4 +1,4 @@
-// MOBILITY ZERO — sheets.js
+// MOBILITY TRAIL — sheets.js
 // Спільні нижні аркуші: ранковий вибір, альтернативи, маршрут, запис поїздки, купівля проїзного, деталі режиму.
 
 import * as E from './engine.js';
@@ -7,12 +7,12 @@ import { scoreRing } from './charts.js';
 import { uid } from './store.js';
 
 export const NAMED = ['eco', 'comfort', 'auto', 'taxi', 'flex'];
-export const MODE_ORDER = ['eco', 'comfort', 'auto', 'taxi', 'flex', 'zero'];
+export const MODE_ORDER = ['eco', 'comfort', 'auto', 'taxi', 'flex', 'best'];
 
 export function modeOf(rec, opt) {
   if (!opt) return null;
   for (const m of NAMED) if (rec.modes[m] && rec.modes[m].key === opt.key) return m;
-  return 'zero';
+  return 'best';
 }
 export const badge = (mode) => `<span class="mode-badge s-${mode}">${esc(E.MODE_INFO[mode]?.code || mode)}</span>`;
 
@@ -320,7 +320,7 @@ function altsHTML(app, open) {
   const rec = app.rec();
   if (!rec.best) return '<div class="empty"><b>Немає варіантів</b>Перевірте маршрути в налаштуваннях.</div>';
   const items = rec.ranking.map((r) => ({ mode: r.mode, opt: r.opt }));
-  if (rec.bestMode === null || !items.some((i) => i.opt.key === rec.best.key)) items.unshift({ mode: 'zero', opt: rec.best });
+  if (rec.bestMode === null || !items.some((i) => i.opt.key === rec.best.key)) items.unshift({ mode: 'best', opt: rec.best });
   items.sort((a, b) => b.opt.total - a.opt.total);
   const w = rec.weights;
   const rt = rec.ctx.state.roundTrip !== false;
@@ -331,11 +331,11 @@ function altsHTML(app, open) {
   <ul class="rank">${items.map((it, i) => {
     const o = it.opt;
     const isOpen = open.has(o.key);
-    const zeroPick = rec.best && o.key === rec.best.key;
+    const isBest = rec.best && o.key === rec.best.key;
     return `<li class="rank-item${i === 0 ? ' top' : ''}">
       <button type="button" class="rank-btn" data-act="toggle" data-key="${esc(o.key)}" aria-expanded="${isOpen}">
         <span class="rank-pos">${i + 1}</span>
-        <span class="rank-main"><b>${esc(E.MODE_INFO[it.mode].code)}${zeroPick ? ' <span class="badge-zero">ZERO обирає</span>' : ''}</b><small>${esc(o.title)}, ${E.fmtUAH(o.cost.decision)}, ${E.fmtMin(o.oneWay)} в один бік</small></span>
+        <span class="rank-main"><b>${esc(E.MODE_INFO[it.mode].code)}${isBest ? ' <span class="badge-best">найкраще</span>' : ''}</b><small>${esc(o.title)}, ${E.fmtUAH(o.cost.decision)}, ${E.fmtMin(o.oneWay)} в один бік</small></span>
         <span class="rank-score"><b>${Math.round(o.total)}</b><small>балів</small></span>
       </button>
       ${isOpen ? `<div class="contrib">
@@ -395,7 +395,7 @@ export function openNav(app) {
       return `<div class="kv"><span>Звідки</span><b>${esc(from.address)}</b></div>
       <div class="kv"><span>Куди</span><b>${esc(to.address)}</b></div>
       ${navButtons(app, rec.best)}
-      <p class="note-box">Відкриється зовнішній застосунок. Живих даних про рух, затори чи розклади MOBILITY ZERO не отримує: час у розрахунках — ваші орієнтовні значення з налаштувань. D-transport відкривається через App Store, бо офіційної схеми посилань на конкретний маршрут у нього немає.</p>
+      <p class="note-box">Відкриється зовнішній застосунок. Живих даних про рух, затори чи розклади застосунок не отримує: час у розрахунках — ваші орієнтовні значення з налаштувань. D-transport відкривається через App Store, бо офіційної схеми посилань на конкретний маршрут у нього немає.</p>
       ${!E.parseCoords(from.coords) || !E.parseCoords(to.coords) ? '<div class="callout warn">' + icon('warn') + '<span>Якщо карта знаходить адресу під іншою назвою, вставте точні координати точки в «Налаштуваннях → Маршрут». Тоді навігатори відкриватимуть саме її.</span></div>' : ''}`;
     },
     onAction: (act) => routeAction(app, act),

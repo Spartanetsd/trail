@@ -1,7 +1,9 @@
-// MOBILITY ZERO — sw.js
+// MOBILITY TRAIL — sw.js
 // Офлайн-кеш. Після будь-яких змін у файлах збільште VERSION — інакше телефони триматимуть стару версію.
 
-const VERSION = 'mz-1.3.0';
+const VERSION = 'trail-1.4.0';
+// Кеші попередньої назви застосунку видаляються під час активації.
+const OLD_PREFIXES = ['trail-', 'mz-'];
 const ASSETS = [
   './', './index.html', './styles.css',
   './app.js', './engine.js', './store.js', './ui.js', './charts.js', './assistant.js', './sheets.js',
@@ -17,7 +19,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k.startsWith('mz-') && k !== VERSION).map((k) => caches.delete(k)));
+    await Promise.all(keys.filter((k) => k !== VERSION && OLD_PREFIXES.some((p) => k.startsWith(p))).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });

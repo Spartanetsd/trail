@@ -1,4 +1,4 @@
-// MOBILITY ZERO — view-compare.js
+// MOBILITY TRAIL — view-compare.js
 // Порівняння: режими, фінансовий калькулятор, графіки, «Що, якщо?», порадник.
 
 import * as E from './engine.js';
@@ -216,7 +216,7 @@ function shell(app) {
     <div id="cmp-be-legend"></div><div id="cmp-be"></div><ul class="insights" id="cmp-be-text" style="margin-top:10px"></ul>
   </div>
 
-  <h2 class="section-title" id="cmp-tips">Порадник ZERO<small>Поради рахуються з ваших налаштувань і календаря.</small></h2>
+  <h2 class="section-title" id="cmp-tips">Порадник<small>Поради рахуються з ваших налаштувань і календаря.</small></h2>
   <div class="card"><ul class="insights" id="cmp-tips-list"></ul></div>`;
 }
 
@@ -248,29 +248,29 @@ function refreshOutputs(app, root) {
     sub.textContent = 'Один день туди-назад у звичайному стані. Натисніть на режим, щоб побачити деталі за місяць.';
     const items = MODE_ORDER.filter((k) => m.dayRec.modes[k]).map((k) => {
       const o = m.dayRec.modes[k];
-      return { key: k, label: E.MODE_INFO[k].code, sub: o.title, value: o.cost.decision, cls: `s-${k}`, badge: k !== 'zero' && m.dayRec.best && o.key === m.dayRec.best.key ? 'ZERO' : '' };
-    }).filter((it) => it.key !== 'zero' || !MODE_ORDER.slice(0, 5).some((k) => m.dayRec.modes[k]?.key === m.dayRec.best?.key));
+      return { key: k, label: E.MODE_INFO[k].code, sub: o.title, value: o.cost.decision, cls: `s-${k}`, badge: k !== 'best' && m.dayRec.best && o.key === m.dayRec.best.key ? 'НАЙКРАЩЕ' : '' };
+    }).filter((it) => it.key !== 'best' || !MODE_ORDER.slice(0, 5).some((k) => m.dayRec.modes[k]?.key === m.dayRec.best?.key));
     root.querySelector('#cmp-bars').innerHTML = barsHTML(items.sort((a, b) => a.value - b.value));
   } else {
     sub.textContent = `${rangeText(m.range)}: ${rep.plan.tripDays} ${E.plural(rep.plan.tripDays, ['день', 'дні', 'днів'])} поїздок${cs.source === 'manual' ? ' (вручну)' : ' за календарем'}. Ваш план: ${E.fmtUAH(rep.plan.totals.decision)}.`;
-    const zeroKey = m.dayRec.best?.key;
+    const bestKey = m.dayRec.best?.key;
     const items = MODE_ORDER.map((k) => {
       const r = rep.modes[k];
       const o = m.dayRec.modes[k];
-      return { key: k, label: E.MODE_INFO[k].code, sub: o ? o.title : 'недоступно', value: r.totals.decision, cls: `s-${k}`, badge: k !== 'zero' && o && o.key === zeroKey ? 'ZERO' : '' };
-    }).filter((it) => it.key !== 'zero' || !MODE_ORDER.slice(0, 5).some((k) => m.dayRec.modes[k]?.key === zeroKey));
+      return { key: k, label: E.MODE_INFO[k].code, sub: o ? o.title : 'недоступно', value: r.totals.decision, cls: `s-${k}`, badge: k !== 'best' && o && o.key === bestKey ? 'НАЙКРАЩЕ' : '' };
+    }).filter((it) => it.key !== 'best' || !MODE_ORDER.slice(0, 5).some((k) => m.dayRec.modes[k]?.key === bestKey));
     root.querySelector('#cmp-bars').innerHTML = barsHTML(items.sort((a, b) => a.value - b.value)) + (rep.plan.tripDays === 0 ? '<p class="small muted" style="margin-top:8px">У цьому періоді немає днів поїздок — перевірте календар або увімкніть «Вручну».</p>' : '');
   }
 
   // Калькулятор: таблиці
   const P = s.trip.passengers;
   const dayOf = (k) => m.dayRec.modes[k];
-  const rowsA = MODE_ORDER.filter((k) => k !== 'zero' && dayOf(k)).map((k) => {
+  const rowsA = MODE_ORDER.filter((k) => k !== 'best' && dayOf(k)).map((k) => {
     const d = dayOf(k).cost.decision;
     return `<tr><th scope="row">${E.MODE_INFO[k].code}</th><td>${E.fmtNum(d / 2)}</td><td>${E.fmtNum(d)}</td><td>${E.fmtNum(m.week.modes[k].totals.decision)}</td><td class="hl">${E.fmtNum(m.month.modes[k].totals.decision)}</td></tr>`;
   }).join('');
   const per = rep || m.month;
-  const rowsB = MODE_ORDER.filter((k) => k !== 'zero').map((k) => {
+  const rowsB = MODE_ORDER.filter((k) => k !== 'best').map((k) => {
     const r = per.modes[k];
     return `<tr><th scope="row">${E.MODE_INFO[k].code}</th><td class="hl">${E.fmtNum(r.totals.decision)}</td><td class="${r.vsCar >= 0 ? 'good' : 'bad'}">${signedNum(r.vsCar)}</td><td class="${r.vsTaxi >= 0 ? 'good' : 'bad'}">${signedNum(r.vsTaxi)}</td><td>${E.fmtNum(r.totals.minutes / 60, 1)}</td></tr>`;
   }).join('');
@@ -371,7 +371,7 @@ function refreshWhatIf(app, root) {
     <div class="card-title">${changed ? 'Результат сценарію' : 'Оберіть зміну вище'}</div>
     <p class="card-sub">Місяць: ${scen.plan.tripDays} ${E.plural(scen.plan.tripDays, ['день', 'дні', 'днів'])} поїздок${cs.scenario.passOwned ? `, уже сплачено за проїзні ${E.fmtUAH(scen.modes.eco.ownedSunk)}` : ''}.</p>
     <div class="table-wrap" style="margin-top:8px"><table class="table"><thead><tr><th>₴ за місяць</th><th>Зараз</th><th>Сценарій</th><th>Різниця</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="kv" style="margin-top:6px"><span>ZERO сьогодні обрав би</span><b>${esc(recBase.best?.title || '—')}${recSc.best && recBase.best && recSc.best.key !== recBase.best.key ? ` → ${esc(recSc.best.title)}` : ''}</b></div>
+    <div class="kv" style="margin-top:6px"><span>Рекомендація на сьогодні</span><b>${esc(recBase.best?.title || '—')}${recSc.best && recBase.best && recSc.best.key !== recBase.best.key ? ` → ${esc(recSc.best.title)}` : ''}</b></div>
   </div>`;
 
   // Точки беззбитковості

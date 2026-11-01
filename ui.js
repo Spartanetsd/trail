@@ -1,4 +1,4 @@
-// MOBILITY ZERO — ui.js
+// MOBILITY TRAIL — ui.js
 // Дрібні інструменти інтерфейсу: екранування, іконки, тости, нижній аркуш, поля вводу.
 
 import { toNum, clamp, fmtNum } from './engine.js';
@@ -332,7 +332,7 @@ export const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (naviga
 export const isStandalone = () => navigator.standalone === true || !!globalThis.matchMedia?.('(display-mode: standalone)').matches;
 // Дрібні зручності одного пристрою (напр., сховані підказки) — окремо від даних застосунку.
 export function deviceFlag(key, value) {
-  const k = `mobility-zero:ui:${key}`;
+  const k = `mobility-trail:ui:${key}`;
   try {
     if (value === undefined) return localStorage.getItem(k) === '1';
     localStorage.setItem(k, value ? '1' : '0');

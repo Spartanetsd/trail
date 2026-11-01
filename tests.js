@@ -1,4 +1,4 @@
-// MOBILITY ZERO — tests.js
+// MOBILITY TRAIL — tests.js
 // Перевірочні тести фінансового модуля. Працюють у браузері (tests.html) і в Node: `node tests.js`.
 
 import * as E from './engine.js';
@@ -186,7 +186,7 @@ test('Оцінки в межах 0–100', () => {
     }
   }
 });
-test('За замовчуванням ZERO обирає трамвай', () => { const r = rec(V1()); eq(r.best.key, 'r:r1|r:r1'); eq(r.bestMode, 'eco'); });
+test('За замовчуванням обирається трамвай', () => { const r = rec(V1()); eq(r.best.key, 'r:r1|r:r1'); eq(r.bestMode, 'eco'); });
 test('Втома: рекомендація без самостійного керування', () => ok(!rec(V1(), { tired: true }).best.isCar));
 test('Втома + негода + багаж → таксі', () => eq(rec(V1(), { tired: true, badWeather: true, luggage: true }).best.key, 'taxi|taxi'));
 test('Поспіх → авто', () => eq(rec(V1(), { hurry: true }).best.key, 'car|car'));
@@ -548,6 +548,30 @@ test('Підказка тарифу: поспіх — Priority +10 ₴, бага
   const r = rec(s, { tired: true, badWeather: true, luggage: true });
   eq(r.best.key, 'taxi|taxi');
   ok(r.explanation.notes.some((n) => /Comfort/.test(n.text)), 'немає поради про Comfort');
+});
+
+/* ── v1.4: нова назва MOBILITY TRAIL ── */
+test('Нова назва: у режимах, підписах і резервній копії немає попередньої назви', () => {
+  for (const [k, m] of Object.entries(E.MODE_INFO)) ok(!/z/i.test(`${k} ${m.code} ${m.name} ${m.hint}`), `режим ${k}`);
+  eq(E.MODE_INFO.best.code, 'BEST'); ok(E.PLAN_MODES.includes('best'));
+  const json = exportJSON(defaultState());
+  ok(!/zero/i.test(json), 'у копії лишилась стара назва');
+  eq(JSON.parse(json).schema, 'mobility-trail'); eq(JSON.parse(json).app, 'MOBILITY TRAIL');
+  eq(defaultSettings().trip.defaultMode, 'best');
+  eq(rec(S()).modes.best.key, rec(S()).best.key);
+});
+test('Старі дані й копії: автопідбір стає BEST, копії попередньої назви імпортуються', () => {
+  const old = 'ze' + 'ro'; // попередня назва режиму в старих даних
+  const notes = [];
+  const st = normalizeState({ settings: { rev: 3, trip: { defaultMode: old } }, calendar: { '2026-11-03': { type: old, eligible: true }, '2026-11-04': { type: 'taxi' } }, history: [trip('2026-11-02', 40, 244, { mode: old })] }, undefined, notes);
+  eq(st.settings.trip.defaultMode, 'best'); eq(st.calendar['2026-11-03'].type, 'best'); eq(st.calendar['2026-11-03'].eligible, true);
+  eq(st.calendar['2026-11-04'].type, 'taxi'); eq(st.history[0].mode, 'best'); ok(notes.includes('автопідбір тепер BEST'), notes.join());
+  const legacyCopy = JSON.stringify({ schema: 'mobility-' + old, version: 1, settings: { trip: { defaultMode: old } }, history: [] });
+  const v = validateImport(legacyCopy);
+  ok(v.ok, v.errors.join(';')); eq(v.state.settings.trip.defaultMode, 'best');
+  ok(validateImport(exportJSON(defaultState())).ok, 'нова копія');
+  const again = []; normalizeState(JSON.parse(exportJSON(st)), undefined, again);
+  ok(!again.includes('автопідбір тепер BEST'), 'перейменування повторюється');
 });
 
 /* ── Запуск ── */

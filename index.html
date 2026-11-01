@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>MOBILITY ZERO</title>
+  <title>MOBILITY TRAIL</title>
   <meta name="description" content="Персональна транспортна система для Дніпра: найкращий спосіб поїздки сьогодні, витрати, проїзні та банк комфорту.">
   <meta name="theme-color" content="#06080c">
   <meta name="color-scheme" content="dark light">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="ZERO">
+  <meta name="apple-mobile-web-app-title" content="TRAIL">
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon-180.png">
@@ -20,7 +20,7 @@
     // Тема до першого кадру, щоб не було спалаху світлого фону.
     (function () {
       try {
-        var raw = localStorage.getItem('mobility-zero:v1');
+        var raw = localStorage.getItem('mobility-trail:v1');
         var t = raw ? (JSON.parse(raw).settings || {}).ui : null;
         var theme = t && t.theme ? t.theme : 'dark';
         if (theme === 'system') theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
@@ -78,17 +78,17 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <div class="boot-error" id="boot-error" hidden>
-    <h1>MOBILITY ZERO не запустився</h1>
+    <h1>MOBILITY TRAIL не запустився</h1>
     <p>Найчастіша причина — у репозиторій завантажено не всі файли. Перевірте, що поруч з index.html лежать: app.js, engine.js, store.js, ui.js, charts.js, assistant.js, sheets.js, view-home.js, view-compare.js, view-calendar.js, view-savings.js, view-settings.js, styles.css, sw.js і manifest.webmanifest.</p>
     <p>Якщо ви відкрили index.html прямо з «Файлів» на телефоні — модулі не працюють без вебсервера. Відкрийте адресу GitHub Pages.</p>
     <button type="button" onclick="location.reload()">Оновити сторінку</button>
   </div>
-  <noscript><p class="noscript">Для роботи MOBILITY ZERO увімкніть JavaScript.</p></noscript>
+  <noscript><p class="noscript">Для роботи MOBILITY TRAIL увімкніть JavaScript.</p></noscript>
 
   <script>
     // Сторож запуску: якщо модулі не завантажились за 8 секунд, показуємо зрозуміле пояснення.
     setTimeout(function () {
-      if (!window.__MZ_READY) { var e = document.getElementById('boot-error'); if (e) e.hidden = false; }
+      if (!window.__APP_READY) { var e = document.getElementById('boot-error'); if (e) e.hidden = false; }
     }, 8000);
   </script>
   <script type="module" src="app.js" onerror="document.getElementById('boot-error').hidden=false"></script>

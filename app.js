@@ -1,8 +1,8 @@
-// MOBILITY ZERO — app.js
+// MOBILITY TRAIL — app.js
 // Контролер: стан, збереження, перемикання вкладок, кеш розрахунків, тема, service worker.
 
 import * as E from './engine.js';
-import { loadState, saveState, normalizeState, taxiSnapshot, syncTaxi, STORAGE_KEY, APP_VERSION } from './store.js';
+import { loadState, saveState, normalizeState, taxiSnapshot, syncTaxi, dropLegacy, STORAGE_KEY, APP_VERSION } from './store.js';
 import { $, $$, toast, initSheet, isIOS } from './ui.js';
 import { buildInsights } from './assistant.js';
 import home from './view-home.js';
@@ -243,11 +243,12 @@ function start() {
   try { navigator.storage?.persist?.()?.catch?.(() => {}); } catch { /* немає Storage API */ }
   if (boot.error) toast('Збережені дані пошкоджені — відкрито стартові налаштування.', { ms: 5000 });
   else if (boot.migrated?.length) {
-    app.persistNow();
+    const saved = app.persistNow();
+    if (saved && boot.legacy) dropLegacy();
     toast(`Оновлено до ${APP_VERSION}: ${boot.migrated.join(', ')}.`, { ms: 7000 });
-  }
-  window.__MZ_READY = true;
-  window.__MZ = app;
+  } else if (boot.legacy && app.persistNow()) dropLegacy();
+  window.__APP_READY = true;
+  window.__APP = app;
 }
 
 function registerSW() {
@@ -263,7 +264,7 @@ function registerSW() {
       lastCheck = Date.now();
       reg.update().catch(() => {});
     });
-    const offer = (w) => toast('Доступна нова версія MOBILITY ZERO', {
+    const offer = (w) => toast('Доступна нова версія MOBILITY TRAIL', {
       action: 'Оновити',
       onAction: () => { requested = true; w.postMessage({ type: 'SKIP_WAITING' }); },
     });

@@ -1,8 +1,8 @@
-// MOBILITY ZERO — engine.js
+// MOBILITY TRAIL — engine.js
 // Розрахунковий рушій: без DOM і без сховища, тож його можна перевіряти тестами.
 // Одиниці: гроші — гривні (₴), час — хвилини, відстань — кілометри, пальне — літри.
 
-export const ENGINE_VERSION = '1.3.0';
+export const ENGINE_VERSION = '1.4.0';
 
 /* ───────────────────────── Числа ───────────────────────── */
 
@@ -144,7 +144,7 @@ export function isCoverable(f, covers) {
   return covers instanceof Set ? covers.has(f.mode) : (covers || []).includes(f.mode);
 }
 
-export const PLAN_MODES = ['eco', 'comfort', 'auto', 'taxi', 'flex', 'zero'];
+export const PLAN_MODES = ['eco', 'comfort', 'auto', 'taxi', 'flex', 'best'];
 export const DAY_TYPES = [...PLAN_MODES, 'off', 'away'];
 export const MODE_INFO = {
   eco:     { code: 'ECO',     name: 'Громадський транспорт', hint: 'ГТ туди й назад' },
@@ -152,7 +152,7 @@ export const MODE_INFO = {
   auto:    { code: 'AUTO',    name: 'Власний автомобіль',    hint: 'одне авто на всіх' },
   taxi:    { code: 'TAXI',    name: 'Таксі туди й назад',    hint: 'одне спільне таксі' },
   flex:    { code: 'FLEX',    name: 'Ваша комбінація',       hint: 'свій вибір на кожен напрямок' },
-  zero:    { code: 'ZERO',    name: 'Автопідбір ZERO',       hint: 'найкраща комбінація за вагами' },
+  best:    { code: 'BEST',    name: 'Автопідбір',            hint: 'найкраща комбінація за вагами' },
   off:     { code: 'Вихідний', name: 'Вихідний',            hint: 'без поїздок' },
   away:    { code: 'Не в Дніпрі', name: 'Не в Дніпрі',      hint: 'без поїздок містом' },
 };
@@ -519,12 +519,12 @@ export function recommend(s, ctxIn = {}) {
   modes.taxi = find(roundTrip ? 'taxi|taxi' : 'taxi|-');
   modes.flex = fSpec ? find(specKey(fSpec)) : null;
   const sorted = [...options].sort(byScore);
-  modes.zero = sorted[0] || null;
+  modes.best = sorted[0] || null;
 
   const named = ['eco', 'comfort', 'auto', 'taxi', 'flex'];
   const modeOf = (o) => (o ? named.find((m) => modes[m] && modes[m].key === o.key) || null : null);
   const ranking = named.filter((m) => modes[m]).map((m) => ({ mode: m, opt: modes[m] })).sort((a, b) => byScore(a.opt, b.opt));
-  const best = modes.zero;
+  const best = modes.best;
   const altEntry = ranking.find((r) => best && r.opt.key !== best.key) || null;
   const alt = altEntry ? altEntry.opt : null;
   const result = { ctx, weights, options, modes, best, bestMode: modeOf(best), alt, altMode: altEntry ? altEntry.mode : null, ranking, sorted };

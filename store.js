@@ -1,12 +1,15 @@
-// MOBILITY ZERO — store.js
+// MOBILITY TRAIL — store.js
 // Стартові налаштування, схема даних, збереження в localStorage, експорт / імпорт JSON.
 
 import { toNum, clamp, isDateStr, parseHM, fmtHM, PLAN_MODES, DAY_TYPES, FARE_MODES, SEGMENT_MODES, DEFAULT_STATE } from './engine.js';
 
-export const STORAGE_KEY = 'mobility-zero:v1';
-export const SCHEMA = 'mobility-zero';
+export const STORAGE_KEY = 'mobility-trail:v1';
+export const SCHEMA = 'mobility-trail';
+// Попередня назва застосунку (до 1.4). Потрібна лише для того, щоб перенести збережені дані
+// й приймати старі резервні копії; після перенесення старі записи видаляються.
+const LEGACY = { prefix: 'mobility-zero:', key: 'mobility-zero:v1', schema: 'mobility-zero', mode: 'zero' };
 export const SCHEMA_VERSION = 1;
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 // Ревізія стартових значень. Коли вона зростає, збережені дані з незмінними старими значеннями оновлюються.
 export const DEFAULTS_REV = 3;
 export const ROUTES_SOURCE = 'D-transport, 01.11.2026';
@@ -76,7 +79,7 @@ export function defaultSettings() {
       b: { label: 'Самарського, 10', address: 'вулиця Якова Самарського, 10, Дніпро', coords: '', confirmed: false },
       swapped: false,
     },
-    trip: { passengers: 2, arriveBy: '08:30', returnDefault: true, defaultMode: 'zero', workDays: [0, 1, 2, 3, 4], hourValue: 0 },
+    trip: { passengers: 2, arriveBy: '08:30', returnDefault: true, defaultMode: 'best', workDays: [0, 1, 2, 3, 4], hourValue: 0 },
     car: {
       name: 'Opel Astra H 1.6 (2006)', distanceKm: 7, consumption: 9, fuelPrice: 89.38, wearPerKm: 3,
       parkingPerHour: 18, parkingHours: 6, driveMin: 20, parkWalkMin: 6, fixedMonthly: 0, capacity: 5,
@@ -342,8 +345,25 @@ export function migrateSettings(s, rawRev, notes = []) {
   return notes;
 }
 
+// Режим автопідбору раніше мав іншу назву: переводимо її в BEST у налаштуваннях, календарі й історії.
+function renameLegacyMode(src, notes) {
+  let n = 0;
+  const m = (v) => { if (v === LEGACY.mode) { n += 1; return 'best'; } return v; };
+  const out = { ...src };
+  const set = src.settings;
+  if (set && typeof set === 'object' && !Array.isArray(set) && set.trip && typeof set.trip === 'object' && !Array.isArray(set.trip)) {
+    out.settings = { ...set, trip: { ...set.trip, defaultMode: m(set.trip.defaultMode) } };
+  }
+  if (src.calendar && typeof src.calendar === 'object' && !Array.isArray(src.calendar)) {
+    out.calendar = Object.fromEntries(Object.entries(src.calendar).map(([d, v]) => [d, v && typeof v === 'object' && !Array.isArray(v) && 'type' in v ? { ...v, type: m(v.type) } : v]));
+  }
+  if (Array.isArray(src.history)) out.history = src.history.map((r) => (r && typeof r === 'object' && r.mode === LEGACY.mode ? { ...r, mode: m(r.mode) } : r));
+  if (n) notes.push('автопідбір тепер BEST');
+  return out;
+}
+
 export function normalizeState(raw, warn = () => {}, notes = []) {
-  const src = raw && typeof raw === 'object' ? raw : {};
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? renameLegacyMode(raw, notes) : {};
   const st = defaultState();
   st.settings = normalizeSettings(src.settings, warn);
   if (src.settings && typeof src.settings === 'object' && !Array.isArray(src.settings)) {
@@ -363,13 +383,44 @@ export function normalizeState(raw, warn = () => {}, notes = []) {
 
 export function loadState() {
   try {
-    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
-    if (!raw) return { state: defaultState(), fresh: true, migrated: [] };
-    const migrated = [];
-    return { state: normalizeState(JSON.parse(raw), undefined, migrated), fresh: false, migrated };
+    const ls = globalThis.localStorage;
+    let raw = ls?.getItem(STORAGE_KEY);
+    let legacy = false;
+    if (!raw) { raw = ls?.getItem(LEGACY.key); legacy = !!raw; }
+    copyLegacyUi();
+    if (!raw) return { state: defaultState(), fresh: true, migrated: [], legacy: hasLegacy() };
+    const migrated = legacy ? ['нова назва — MOBILITY TRAIL'] : [];
+    return { state: normalizeState(JSON.parse(raw), undefined, migrated), fresh: false, migrated, legacy: legacy || hasLegacy() };
   } catch {
     return { state: defaultState(), fresh: true, error: true, migrated: [] };
   }
+}
+
+function legacyKeys() {
+  const ls = globalThis.localStorage;
+  const out = [];
+  for (let i = 0; i < (ls?.length || 0); i++) { const k = ls.key(i); if (k && k.startsWith(LEGACY.prefix)) out.push(k); }
+  return out;
+}
+function hasLegacy() { try { return legacyKeys().length > 0; } catch { return false; } }
+
+// Дрібні налаштування пристрою (напр., приховані підказки) переносимо ще до першого показу екрана.
+function copyLegacyUi() {
+  try {
+    const ls = globalThis.localStorage;
+    for (const k of legacyKeys()) {
+      const ui = k.slice(LEGACY.prefix.length);
+      if (ui.startsWith('ui:') && ls.getItem(`mobility-trail:${ui}`) === null) ls.setItem(`mobility-trail:${ui}`, ls.getItem(k));
+    }
+  } catch { /* сховище недоступне — не страшно */ }
+}
+// Після того як дані збережено під новою назвою, старі записи прибираємо.
+export function dropLegacy() {
+  try {
+    copyLegacyUi();
+    for (const k of legacyKeys()) globalThis.localStorage.removeItem(k);
+    return true;
+  } catch { return false; }
 }
 
 export function saveState(state) {
@@ -383,14 +434,14 @@ export function saveState(state) {
 }
 
 export function clearStorage() {
-  try { globalThis.localStorage.removeItem(STORAGE_KEY); return true; } catch { return false; }
+  try { globalThis.localStorage.removeItem(STORAGE_KEY); for (const k of legacyKeys()) globalThis.localStorage.removeItem(k); return true; } catch { return false; }
 }
 
 /* ───────────────────────── Експорт / імпорт ───────────────────────── */
 
 export function exportJSON(state) {
   return JSON.stringify({
-    schema: SCHEMA, version: SCHEMA_VERSION, app: 'MOBILITY ZERO', appVersion: APP_VERSION,
+    schema: SCHEMA, version: SCHEMA_VERSION, app: 'MOBILITY TRAIL', appVersion: APP_VERSION,
     exportedAt: new Date().toISOString(),
     settings: state.settings, calendar: state.calendar, history: state.history, today: state.today, meta: state.meta,
   }, null, 2);
@@ -401,8 +452,8 @@ export function validateImport(text) {
   const errors = [], warnings = [];
   let obj;
   try { obj = typeof text === 'string' ? JSON.parse(text) : text; } catch { return { ok: false, errors: ['Файл не є коректним JSON.'], warnings }; }
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, errors: ['Очікувався обʼєкт резервної копії MOBILITY ZERO.'], warnings };
-  if (obj.schema !== SCHEMA) errors.push('Це не резервна копія MOBILITY ZERO (поле schema).');
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, errors: ['Очікувався обʼєкт резервної копії MOBILITY TRAIL.'], warnings };
+  if (obj.schema !== SCHEMA && obj.schema !== LEGACY.schema) errors.push('Це не резервна копія MOBILITY TRAIL (поле schema).');
   const v = toNum(obj.version, NaN);
   if (!Number.isInteger(v) || v < 1) errors.push('Невідома версія схеми.');
   else if (v > SCHEMA_VERSION) errors.push('Копію створено новішою версією застосунку — оновіть застосунок.');
