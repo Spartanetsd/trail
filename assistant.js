@@ -1,7 +1,7 @@
 // MOBILITY ZERO — assistant.js
 // Локальний порадник на правилах. Кожна порада — результат обчислень із поточних налаштувань.
 
-import { fmtGrn, fmtMin, fmtNum, plural, optName, SEGMENT_MODES, addDays, weekStart, resolveDayType, PLAN_MODES, carCosts, makeCtx, vehicles, departureFor } from './engine.js';
+import { fmtGrn, fmtMin, fmtNum, plural, optName, SEGMENT_MODES, addDays, weekStart, resolveDayType, PLAN_MODES, carCosts, makeCtx, vehicles, departureFor, isCoverable, stopAdvice, adviceText, joinOr, taxiTariffTip } from './engine.js';
 import { humanDate } from './ui.js';
 
 const TONE_ORDER = { warn: 0, money: 1, good: 2, info: 3 };
@@ -41,6 +41,26 @@ export function buildInsights({ s, rec, month, passPlan, bankNow, weekProjected,
     if (dep) add('depart', 'info', `Щоб прибути до ${dep.arrive}, виходьте о ${dep.time}: ${fmtMin(dep.minutes)} у дорозі й ${dep.buffer} хв запасу.`, 4);
   }
 
+  // Таксі сьогодні: інший тариф, якщо поспішаєте чи з багажем
+  if (best && best.legs.some((l) => l.kind === 'taxi')) {
+    const tt = taxiTariffTip(s, st);
+    if (tt) add('taxi-tariff', 'info', `${st.hurry ? 'Поспішаєте' : 'З багажем'}: тариф ${tt.tariff.name} дорожчий лише на ${fmtGrn(tt.extra)} за поїздку — ${tt.why}.`, 2.6);
+  }
+
+  // На зупинці: не чекати один номер, і що робити, якщо першим прийде інший.
+  const leg = best?.there?.kind === 'route' ? best.there : null;
+  if (leg) {
+    const multi = leg.steps.find((x) => x.kind === 'ride' && x.n > 1);
+    if (multi) add('first-come', 'good', `Не чекайте один номер: ${multi.from ? `на «${multi.from}» ` : ''}сідайте в перший — ${joinOr(multi.lines)}. Очікування ≈${fmtMin(multi.wait)} замість ≈${fmtMin(multi.wait1)}.`, 2.5);
+    const adv = stopAdvice(s, best.spec.there.id, rec.ctx);
+    let tip = null;
+    for (const a of adv) for (const x of a.alts) if (!tip && ['take', 'hurry'].includes(x.verdict)) tip = { a, x };
+    if (tip) {
+      const t = adviceText(tip.x, s.trip.passengers);
+      add('stop-alt', 'info', `На «${tip.a.stop}», якщо першим прийде ${joinOr(tip.x.lines)}, — ${t}.`, 3.5);
+    }
+  }
+
   // Проїзні за цього графіка — лише на майбутні дні
   const plan = passPlan;
   if (plan && plan.tripDays > 0 && plan.coverableTotal > 0) {
@@ -58,13 +78,13 @@ export function buildInsights({ s, rec, month, passPlan, bankNow, weekProjected,
   }
   if (m.eco) {
     const covers = s.transit.passes.covers;
-    const perDay = m.eco.legs.reduce((a, l) => a + l.fares.filter((f) => covers.includes(f.mode)).reduce((x, f) => x + f.fare, 0), 0);
+    const perDay = m.eco.legs.reduce((a, l) => a + l.fares.filter((f) => isCoverable(f, covers)).reduce((x, f) => x + f.fare, 0), 0);
     if (perDay > 0 && s.transit.passes.weeklyPrice > 0) {
       const ratio = s.transit.passes.weeklyPrice / perDay;
       const nDays = Number.isInteger(Math.round(ratio * 1e6) / 1e6) ? Math.round(ratio) + 1 : Math.ceil(ratio);
       if (nDays <= 7) add('pass-week', 'info', `Тижневий проїзний окупається з ${nDays}-го дня поїздок на тиждень${nDays === 6 ? ': за п’ять робочих днів він коштує стільки ж, як разові квитки' : ''}.`, 5);
     }
-    const uncovered = [...new Set(m.eco.legs.flatMap((l) => l.fares.filter((f) => !covers.includes(f.mode)).map((f) => SEGMENT_MODES[f.mode].label.toLowerCase())))];
+    const uncovered = [...new Set(m.eco.legs.flatMap((l) => l.fares.filter((f) => !isCoverable(f, covers)).map((f) => (f.special ? `${SEGMENT_MODES[f.mode].label.toLowerCase()} за окремим тарифом` : SEGMENT_MODES[f.mode].label.toLowerCase()))))];
     if (uncovered.length && covers.length) add('pass-cover', 'info', `Проїзний не покриває: ${uncovered.join(', ')} — ці посадки оплачуються разовими квитками.`, 6);
   }
 

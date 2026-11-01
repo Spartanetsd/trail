@@ -183,7 +183,7 @@ function shell(app) {
   <div class="card">
     <div class="card-title">Таксі та громадський транспорт</div>
     <div class="grid-2" style="margin-top:10px">
-      ${numField({ bind: 'taxi.price', label: 'Таксі в один бік', value: s.taxi.price, unit: '₴', max: 20000, assumption: true, id: 'c-taxi' })}
+      ${numField({ bind: 'taxi.price', label: E.selectedTariff(s) ? `Таксі ${E.selectedTariff(s).name} в один бік` : 'Таксі в один бік', value: s.taxi.price, unit: '₴', max: 20000, assumption: true, id: 'c-taxi' })}
       ${numField({ bind: 'transit.fares.tram', label: 'Квиток (трамвай)', value: s.transit.fares.tram, unit: '₴', max: 1000, assumption: true, id: 'c-tram' })}
       ${numField({ bind: 'transit.passes.weeklyPrice', label: 'Тижневий проїзний', value: s.transit.passes.weeklyPrice, unit: '₴/ос.', max: 20000, assumption: true, id: 'c-week' })}
       ${numField({ bind: 'transit.passes.monthlyPrice', label: 'Місячний проїзний', value: s.transit.passes.monthlyPrice, unit: '₴/ос.', max: 50000, assumption: true, id: 'c-month' })}
@@ -284,7 +284,7 @@ function refreshOutputs(app, root) {
     const leg = dayOf('eco').there;
     const covers = s.transit.passes.covers;
     const legSingles = leg.fares.reduce((a, f) => a + f.fare, 0) * P;
-    const legUncov = leg.fares.filter((f) => !covers.includes(f.mode)).reduce((a, f) => a + f.fare, 0) * P;
+    const legUncov = leg.fares.filter((f) => !E.isCoverable(f, covers)).reduce((a, f) => a + f.fare, 0) * P;
     const saved = eco.purchases.length ? legUncov : legSingles;
     const taxiLeg = dayOf('taxi').there.cost;
     const total = eco.totals.decision + cs.taxiTrips * (taxiLeg - saved);

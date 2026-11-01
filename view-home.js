@@ -2,9 +2,9 @@
 // Головна: «проїзний квиток дня» з рекомендацією, ранковий вибір, ключові цифри й порадник.
 
 import * as E from './engine.js';
-import { esc, icon, countUp, humanDate } from './ui.js';
+import { esc, icon, countUp, humanDate, isIOS, isStandalone, deviceFlag } from './ui.js';
 import { scoreRing } from './charts.js';
-import { badge, modeOf, legsLine, openMorning, openAlternatives, openNav, openLogTrip, signed } from './sheets.js';
+import { badge, modeOf, legStrip, boardLines, backLine, openMorning, openAlternatives, openRoute, openLogTrip, signed } from './sheets.js';
 import { TONE_ICON } from './assistant.js';
 
 let issued = false;
@@ -26,9 +26,10 @@ export default {
         app.setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
       } else if (act === 'morning') openMorning(app);
       else if (act === 'alts') openAlternatives(app);
-      else if (act === 'nav') openNav(app);
+      else if (act === 'route' || act === 'nav') openRoute(app);
       else if (act === 'log') { const r = app.rec(); openLogTrip(app, { date: app.today(), mode: modeOf(r, r.best) === 'zero' ? 'eco' : modeOf(r, r.best) }); }
       else if (act === 'go') app.go(t.dataset.tab, { anchor: t.dataset.anchor || null });
+      else if (act === 'a2hs-hide') { deviceFlag('a2hs-hidden', true); t.closest('.a2hs')?.remove(); }
     });
   },
 
@@ -84,7 +85,6 @@ function html(app) {
     const sv = car.cost.decision - best.cost.decision;
     third = `<div class="metric"><small>Економія проти авто</small><b class="${sv >= 0 ? 'good' : 'bad'}">${signed(sv)}</b></div>`;
   }
-  const asym = !best.back || best.there.label !== best.back.label;
   const why = `${ex.reasons[0]?.text || ''}${ex.tradeoff ? `. ${ex.tradeoff}` : ''}.`;
 
   h += `<article class="pass${issued ? '' : ' issue'}" aria-labelledby="pass-title">
@@ -96,8 +96,10 @@ function html(app) {
         </div>
         <div class="ring-wrap">${scoreRing(best.total)}<small>оцінка зі 100</small></div>
       </div>
-      <h1 class="pass-title" id="pass-title">${esc(best.title)}</h1>
-      ${asym ? `<p class="pass-legs">${legsLine(best, rt)}</p>` : ''}
+      <h1 class="pass-title${best.title.length > 16 ? ' long' : ''}" id="pass-title">${esc(best.title)}</h1>
+      ${legStrip(best.there, s)}
+      ${boardLines(best.there, s, rec.ctx.state)}
+      ${backLine(best)}
       <div class="pass-metrics">
         <div class="metric"><small>Орієнтовний час</small><b>${E.fmtMin(best.oneWay)}</b></div>
         <div class="metric"><small>Вартість ${forWhom(s.trip.passengers)}</small><b data-count="${best.cost.decision.toFixed(2)}" data-suffix=" ₴">${E.fmtUAH(best.cost.decision)}</b></div>
@@ -108,8 +110,8 @@ function html(app) {
     <div class="pass-stub">
       ${dep ? `<div class="depart"><b>Вихід о ${dep.time}</b><span>прибуття до ${dep.arrive}, запас ${dep.buffer} хв</span></div>` : ''}
       <div class="pass-actions">
-        <button type="button" class="btn" data-act="alts">Переглянути альтернативи</button>
-        <button type="button" class="btn primary" data-act="nav">${icon('map')}Маршрут</button>
+        <button type="button" class="btn" data-act="alts">Інші варіанти</button>
+        <button type="button" class="btn primary" data-act="route">${icon('route')}Маршрут</button>
       </div>
     </div>
   </article>
@@ -118,10 +120,12 @@ function html(app) {
   const week = app.week();
   const month = app.month();
   const bank = app.bank();
+  const fit = (t) => (t.length > 7 ? ' long' : '');
+  const wk = E.fmtUAH(week.totals.decision), mo = signed(month.plan.vsCar), bk = E.fmtUAH(bank.balance);
   h += `<div class="tiles">
-    <button type="button" class="tile" data-act="go" data-tab="calendar"><small>Цей тиждень</small><b>${E.fmtUAH(week.totals.decision)}</b><span>${week.tripDays} ${E.plural(week.tripDays, ['день', 'дні', 'днів'])} поїздок</span></button>
-    <button type="button" class="tile" data-act="go" data-tab="compare"><small>Економія місяця</small><b class="${month.plan.vsCar >= 0 ? 'good' : 'bad'}">${signed(month.plan.vsCar)}</b><span>за планом</span></button>
-    <button type="button" class="tile" data-act="go" data-tab="savings"><small>Банк комфорту</small><b class="${bank.balance < 0 ? 'bad' : ''}">${E.fmtUAH(bank.balance)}</b><span>${bank.taxiTrips > 0 ? `≈ ${bank.taxiTrips} таксі` : 'на таксі'}</span></button>
+    <button type="button" class="tile" data-act="go" data-tab="calendar"><small>Цей тиждень</small><b class="${fit(wk)}">${wk}</b><span>${week.tripDays} ${E.plural(week.tripDays, ['день', 'дні', 'днів'])} поїздок</span></button>
+    <button type="button" class="tile" data-act="go" data-tab="compare"><small>Економія місяця</small><b class="${month.plan.vsCar >= 0 ? 'good' : 'bad'}${fit(mo)}">${mo}</b><span>за планом</span></button>
+    <button type="button" class="tile" data-act="go" data-tab="savings"><small>Банк комфорту</small><b class="${bank.balance < 0 ? 'bad' : ''}${fit(bk)}">${bk}</b><span>${bank.taxiTrips > 0 ? `≈ ${bank.taxiTrips} таксі` : 'на таксі'}</span></button>
   </div>`;
 
   const tips = app.insights().filter((t) => t.id !== 'depart').slice(0, 3);
@@ -132,6 +136,10 @@ function html(app) {
     </section>`;
   }
 
+  // Safari на iPhone: одноразова підказка встановити на початковий екран (дані не зітруться, працює як застосунок).
+  if (isIOS() && !isStandalone() && !deviceFlag('a2hs-hidden')) {
+    h += `<div class="callout a2hs" style="margin-bottom:12px">${icon('plus')}<span><b>Додайте ZERO на початковий екран</b> — на весь екран, офлайн, і дані не зітруться. «Поділитися» → «На початковий екран» (рос. «На экран „Домой“»). <button type="button" class="link-btn" data-act="a2hs-hide">Сховати</button></span></div>`;
+  }
   h += `<section class="card"><div class="today-strip">
     <div><small class="dim">${esc(humanDate(today, true))}</small><br><b>За планом: ${esc(E.MODE_INFO[type].name)}</b>${loggedToday ? '<br><small class="good">Поїздку вже записано</small>' : ''}</div>
     <button type="button" class="btn small" data-act="log">${icon('plus')}Записати поїздку</button>

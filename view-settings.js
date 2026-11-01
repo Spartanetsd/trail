@@ -2,12 +2,15 @@
 // Налаштування: адреси, поїздки, авто, таксі, ГТ і маршрути, проїзні, пільга, пріоритети, банк, тема, дані.
 
 import * as E from './engine.js';
-import { exportJSON, validateImport, clearStorage, defaultState, defaultSettings, uid, APP_VERSION } from './store.js';
-import { esc, icon, numField, textField, switchRow, selectField, readField, setFieldMsg, setPath, getPath, fmtInput, toast, openSheet, closeSheet, shareOrDownload, copyText, DOW_SHORT, humanDate } from './ui.js';
-import { openPassPurchase, presetChips } from './sheets.js';
+import { exportJSON, validateImport, clearStorage, defaultState, defaultSettings, defaultRoutes, uid, APP_VERSION, ROUTES_SOURCE } from './store.js';
+import { esc, icon, numField, textField, switchRow, selectField, readField, setFieldMsg, setPath, getPath, fmtInput, toast, openSheet, closeSheet, shareOrDownload, copyText, DOW_SHORT, humanDate, isIOS, isStandalone } from './ui.js';
+import { openPassPurchase, presetChips, legStrip } from './sheets.js';
 
 let wTimer = 0;
 const SEG_OPTIONS = Object.entries(E.SEGMENT_MODES).map(([k, v]) => [k, v.label]);
+const openRoutes = new Set(); // які маршрути розгорнуті для редагування (переживає перемальовування)
+// Поле, після зміни якого розділ перемальовується (оновлюються час, ціна й смуга маршруту).
+const rr = (html) => html.replace(/data-kind="(\w+)"/, 'data-kind="$1" data-rerender="1"');
 
 export default {
   mount(app, root) {
@@ -16,6 +19,11 @@ export default {
       if (!t || !root.contains(t)) return;
       onAction(app, root, t.dataset.act, t, this);
     });
+    root.addEventListener('toggle', (ev) => {
+      const d = ev.target;
+      if (!d.matches?.('details.rc-edit')) return;
+      if (d.open) openRoutes.add(d.dataset.rid); else openRoutes.delete(d.dataset.rid);
+    }, true);
     root.addEventListener('change', (ev) => {
       const el = ev.target;
       if (el.id === 'import-file') { importFile(app, el); return; }
@@ -91,7 +99,9 @@ function html(app) {
   const straight = ca && cb ? E.haversineKm(ca, cb) : null;
   const passes = app.hist.filter((r) => r.kind === 'pass').sort((a, b) => (a.start < b.start ? 1 : -1));
   const routeIds = s.transit.routes.map((r) => [r.id, `${r.name}${r.enabled ? '' : ' (вимкнено)'}`]);
+  const taxiOpt = ['taxi', E.selectedTariff(s) ? `Таксі ${E.selectedTariff(s).name}` : 'Таксі'];
   const fareModes = E.FARE_MODES;
+  const taxiSel = E.selectedTariff(s);
   const modeLabel = (m) => E.SEGMENT_MODES[m].label;
 
   const point = (key, title) => {
@@ -107,33 +117,55 @@ function html(app) {
       </div></div>`;
   };
 
+  // Маршрут — коротка картка: назва, смуга, час і ціна, перемикач. Подробиці — під «Змінити маршрут».
+  // Маршрути редагуються в напрямку А → Б, навіть якщо зараз точки поміняно місцями.
+  const sAB = s.route.swapped ? { ...s, route: { ...s.route, swapped: false } } : s;
   const routeCard = (r, i) => {
-    const leg = E.transitLeg(r, s, E.makeCtx());
-    const boards = r.segments.filter((g) => E.FARE_MODES.includes(g.mode)).length;
-    return `<div class="route-card${r.enabled ? '' : ' disabled'}">
-      <div class="row between"><div class="card-title">${esc(r.name || 'Маршрут')}</div>${r.confirmed ? '<span class="mode-badge s-eco">ПЕРЕВІРЕНО</span>' : '<span class="tag-approx">орієнтовно</span>'}</div>
-      <p class="small muted" style="margin-top:4px">${r.segments.length ? `≈ ${E.fmtMin(leg.minutes)} в один бік, ${boards} ${E.plural(boards, ['посадка', 'посадки', 'посадок'])}, ${E.fmtUAH(leg.cost)} ${s.trip.passengers > 1 ? `на ${s.trip.passengers} осіб` : ''} разовими` : 'Додайте хоча б один відрізок.'}</p>
-      <div class="stack" style="margin-top:10px">
-        ${textField({ bind: `transit.routes.${i}.name`, label: 'Назва', value: r.name, max: 60, id: `rt-${i}-name` }).replace('data-kind="text"', 'data-kind="text" data-rerender="1"')}
-        ${switchRow({ bind: `transit.routes.${i}.enabled`, label: 'Використовувати в розрахунках', checked: r.enabled, id: `rt-${i}-en` }).replace('data-kind="bool"', 'data-kind="bool" data-rerender="1"')}
-        ${switchRow({ bind: `transit.routes.${i}.confirmed`, label: 'Перевірено мною', checked: r.confirmed, hint: 'Зупинки, пересадки та інтервали звірені в D-transport або на місці.', id: `rt-${i}-ok` }).replace('data-kind="bool"', 'data-kind="bool" data-rerender="1"')}
+    const leg = E.transitLeg(r, sAB, E.makeCtx());
+    const fare = leg.fares.reduce((a, f) => a + f.fare, 0);
+    const meta = r.segments.length
+      ? `≈ ${E.fmtMin(leg.minutes)} · ${E.fmtUAH(fare)} на особу${r.confirmed ? '' : ' · орієнтовно'}${r.src ? ` · <span class="nowrap">${esc(r.src)}</span>` : ''}`
+      : 'Додайте хоча б один відрізок';
+    return `<div class="route-card${r.enabled ? '' : ' disabled'}" id="rc-${esc(r.id)}">
+      <div class="rc-head">
+        <div class="rc-title"><b>${esc(r.name || 'Маршрут')}</b><small>${meta}</small></div>
+        <input class="switch" type="checkbox" role="switch" aria-label="Використовувати маршрут «${esc(r.name || 'Маршрут')}»" data-bind="transit.routes.${i}.enabled" data-kind="bool" data-rerender="1" ${r.enabled ? 'checked' : ''}>
       </div>
-      ${r.segments.map((g, j) => `<div class="seg-row">
-        ${selectField({ bind: `transit.routes.${i}.segments.${j}.mode`, label: `Відрізок ${j + 1}`, value: g.mode, options: SEG_OPTIONS, id: `rt-${i}-${j}-mode` }).replace('data-kind="select"', 'data-kind="select" data-rerender="1"')}
-        ${textField({ bind: `transit.routes.${i}.segments.${j}.line`, label: '№ лінії', value: g.line, max: 12, id: `rt-${i}-${j}-line` }).replace('data-kind="text"', 'data-kind="text" data-rerender="1"')}
+      ${r.segments.length ? legStrip(leg, sAB) : ''}
+      <details class="rc-edit" data-rid="${esc(r.id)}" ${openRoutes.has(r.id) ? 'open' : ''}><summary>Змінити маршрут</summary>
+      <div class="stack">
+        ${rr(textField({ bind: `transit.routes.${i}.name`, label: 'Назва', value: r.name, max: 60, id: `rt-${i}-name` }))}
+        ${rr(switchRow({ bind: `transit.routes.${i}.confirmed`, label: 'Перевірено', checked: r.confirmed, hint: 'Зупинки й пересадки звірені в D-transport або на місці.', id: `rt-${i}-ok` }))}
+      </div>
+      ${r.segments.map((g, j) => {
+        const n = E.parseLines(g.line).length;
+        const isPT = E.FARE_MODES.includes(g.mode);
+        return `<div class="seg-row">
+        <div class="seg-head"><b>Відрізок ${j + 1}</b><button type="button" class="link-btn" data-act="seg-del" data-i="${i}" data-j="${j}">Видалити</button></div>
+        <div class="grid-2">
+          ${rr(selectField({ bind: `transit.routes.${i}.segments.${j}.mode`, label: 'Вид', value: g.mode, options: SEG_OPTIONS, id: `rt-${i}-${j}-mode` }))}
+          ${rr(textField({ bind: `transit.routes.${i}.segments.${j}.line`, label: 'Номери', value: g.line, max: 40, placeholder: '157А, 146А', id: `rt-${i}-${j}-line`, code: true }))}
+          ${rr(textField({ bind: `transit.routes.${i}.segments.${j}.from`, label: 'Звідки (зупинка)', value: g.from, max: 60, id: `rt-${i}-${j}-from`, code: true }))}
+          ${rr(textField({ bind: `transit.routes.${i}.segments.${j}.to`, label: 'Куди (зупинка)', value: g.to, max: 60, id: `rt-${i}-${j}-to`, code: true }))}
+        </div>
         <div class="grid-3">
           ${segNum(i, j, 'walkMin', 'Пішки до', g.walkMin)}
-          ${segNum(i, j, 'waitMin', 'Чекати', g.waitMin)}
+          ${segNum(i, j, 'waitMin', g.mode === 'taxi' ? 'Подача' : 'Чекати', g.waitMin)}
           ${segNum(i, j, 'rideMin', g.mode === 'walk' ? 'Іти' : 'Їхати', g.rideMin)}
         </div>
-        ${g.mode === 'taxi' ? numField({ bind: `transit.routes.${i}.segments.${j}.price`, label: 'Ціна таксі на цьому відрізку', value: g.price, unit: '₴', max: 20000, id: `rt-${i}-${j}-price` }).replace('data-kind="num"', 'data-kind="num" data-rerender="1"') : ''}
-        <div class="seg-tools"><button type="button" class="link-btn" data-act="seg-del" data-i="${i}" data-j="${j}">Видалити відрізок</button></div>
-      </div>`).join('')}
-      ${numField({ bind: `transit.routes.${i}.walkEndMin`, label: 'Від останньої зупинки пішки', value: r.walkEndMin, unit: 'хв', max: 120, id: `rt-${i}-end` }).replace('data-kind="num"', 'data-kind="num" data-rerender="1"')}
+        <div class="grid-2">
+          ${rr(numField({ bind: `transit.routes.${i}.segments.${j}.stops`, label: 'Зупинок', value: g.stops, unit: 'шт.', max: 99, int: true, id: `rt-${i}-${j}-stops` }))}
+          ${rr(numField({ bind: `transit.routes.${i}.segments.${j}.price`, label: g.mode === 'taxi' ? 'Ціна таксі' : 'Ціна посадки', value: g.price, unit: '₴', max: 20000, id: `rt-${i}-${j}-price` }))}
+        </div>
+        <p class="hint">${isPT ? `${n > 1 ? `${n} ${E.plural(n, ['номер', 'номери', 'номерів'])}: чекати будь-який ≈${E.fmtMin(E.waitAny(g.waitMin, n))} замість ≈${E.fmtMin(g.waitMin)}. ` : 'Кілька номерів пишіть через кому — застосунок скаже сідати в перший, що прийде. '}«Чекати» — скільки в середньому чекаєте один номер. Ціна посадки 0 — за тарифом виду транспорту; інша ціна — окремий тариф, проїзний його не покриває.` : ''}</p>
+      </div>`;
+      }).join('')}
+      ${rr(numField({ bind: `transit.routes.${i}.walkEndMin`, label: 'Від останньої зупинки пішки', value: r.walkEndMin, unit: 'хв', max: 120, id: `rt-${i}-end` }))}
       <div class="row wrap" style="margin-top:10px">
         ${r.segments.length < 6 ? `<button type="button" class="btn small" data-act="seg-add" data-i="${i}">${icon('plus')}Відрізок</button>` : ''}
         <button type="button" class="btn small danger" data-act="route-del" data-i="${i}">${icon('trash')}Видалити маршрут</button>
       </div>
+      </details>
     </div>`;
   };
 
@@ -189,26 +221,33 @@ function html(app) {
     <p class="hint">Множник заторів діє на таксі й авто повністю, на тролейбус і автобус частково, на трамвай слабо, на метро — ні.</p>
   </div>
 
-  <h2 class="section-title" id="set-taxi">Таксі</h2>
-  <div class="card"><div class="grid-2">
-    ${numField({ bind: 'taxi.price', label: 'Поїздка в один бік', value: s.taxi.price, unit: '₴', max: 20000, assumption: true })}
-    ${numField({ bind: 'taxi.capacity', label: 'Місць у таксі', value: s.taxi.capacity, unit: 'ос.', min: 1, max: 8, int: true })}
-    ${numField({ bind: 'taxi.waitMin', label: 'Очікування авто', value: s.taxi.waitMin, unit: 'хв', max: 120, assumption: true })}
-    ${numField({ bind: 'taxi.rideMin', label: 'У дорозі', value: s.taxi.rideMin, unit: 'хв', min: 1, max: 600, assumption: true })}
-  </div><p class="hint">Ціна — за одне спільне таксі на всіх пасажирів.</p></div>
+  <h2 class="section-title" id="set-taxi">Таксі<small>Ціна — в один бік за одне авто на всіх.</small></h2>
+  <div class="card">
+    <div class="chips" role="radiogroup" aria-label="Тариф таксі">${s.taxi.tariffs.map((t) => `<button type="button" class="chip tariff" role="radio" aria-checked="${t.id === s.taxi.tariff}" data-act="tariff" data-id="${esc(t.id)}">${esc(t.name)}<b>${E.fmtUAH(t.price)}</b></button>`).join('')}</div>
+    <p class="hint">${taxiSel ? `${esc(taxiSel.name)} — ${esc(taxiSel.note)}. ` : 'Своя ціна — або оберіть тариф. '}Ціни ${esc(s.taxi.src || 'Bolt')}: тоді авто були недоступні; удень, у дощ і в години пік ціна змінюється.</p>
+    <div class="grid-2" style="margin-top:12px">
+      ${rr(numField({ bind: 'taxi.price', label: taxiSel ? `${taxiSel.name} в один бік` : 'Поїздка в один бік', value: s.taxi.price, unit: '₴', max: 20000, assumption: true }))}
+      ${numField({ bind: 'taxi.capacity', label: 'Місць у таксі', value: s.taxi.capacity, unit: 'ос.', min: 1, max: 8, int: true })}
+      ${numField({ bind: 'taxi.waitMin', label: 'Подача авто', value: s.taxi.waitMin, unit: 'хв', max: 120, assumption: true })}
+      ${numField({ bind: 'taxi.rideMin', label: 'У дорозі', value: s.taxi.rideMin, unit: 'хв', min: 1, max: 600, assumption: true })}
+    </div>
+    ${s.taxi.tariffs.length ? `<details class="rc-edit" data-rid="taxi-tariffs" ${openRoutes.has('taxi-tariffs') ? 'open' : ''}><summary>Ціни всіх тарифів</summary>
+      <div class="grid-2" style="margin-top:8px">${s.taxi.tariffs.map((t, i) => rr(numField({ bind: `taxi.tariffs.${i}.price`, label: t.name, value: t.price, unit: '₴', max: 20000, id: `tf-${i}` }))).join('')}</div>
+    </details>` : ''}
+  </div>
 
   <h2 class="section-title" id="set-transit">Громадський транспорт<small>Ціна за одну посадку на одну людину.</small></h2>
   <div class="card"><div class="grid-2">
     ${fareModes.map((m) => numField({ bind: `transit.fares.${m}`, label: modeLabel(m), value: s.transit.fares[m], unit: '₴', max: 1000, assumption: true })).join('')}
-  </div><p class="hint">За повідомленнями преси на березень 2026: трамвай, тролейбус і метро в Дніпрі — 10 ₴, маршрутки — 20 ₴. Перевірте актуальні тарифи перевізника.</p>
+  </div><p class="hint">За D-transport на 01.11.2026: трамвай і тролейбус — 10 ₴, маршрутки — 25 ₴, Ретро-трамвай — 15 ₴ (у маршруті як окрема ціна посадки). Тарифи змінюються — звіряйте з перевізником.</p>
   <div style="margin-top:12px">${selectField({ bind: 'transit.ecoRoute', label: 'Маршрут для ECO', value: s.transit.ecoRoute || 'auto', options: [['auto', 'Автоматично'], ...s.transit.routes.filter((r) => r.enabled && E.isPureTransit(r)).map((r) => [r.id, r.name])] })}</div></div>
-  <div class="callout warn">${icon('warn')}<span>Маршрути нижче — шаблони. MOBILITY ZERO не знає реальних розкладів, зупинок і пересадок: звірте їх у D-transport і позначте «Перевірено мною». Неперевірений маршрут позначається як орієнтовний і отримує нижчу надійність.</span></div>
+  <div class="callout">${icon('info')}<span>Маршрути, зупинки, час руху й пішки — з D-transport (${esc(ROUTES_SOURCE.split(', ')[1] || ROUTES_SOURCE)}, нічний розрахунок). <b>Очікування одного номера</b> — ваше припущення: уточніть уранці. Якщо на зупинці підходять кілька номерів, застосунок радить сідати в перший, що прийде, і рахує коротше очікування.</span></div>
   ${s.transit.routes.map(routeCard).join('')}
-  <div class="row wrap" style="margin-top:12px">${s.transit.routes.length < 12 ? `<button type="button" class="btn" data-act="route-add">${icon('plus')}Додати маршрут</button>` : ''}<a class="btn" href="${E.DTRANSPORT_URL}" target="_blank" rel="noopener">${icon('route')}D-transport</a></div>
+  <div class="row wrap" style="margin-top:12px">${s.transit.routes.length < 12 ? `<button type="button" class="btn" data-act="route-add">${icon('plus')}Додати маршрут</button>` : ''}<a class="btn" href="${E.DTRANSPORT_URL}" target="_blank" rel="noopener">${icon('route')}D-transport</a><button type="button" class="btn ghost" data-act="routes-reset">Відновити маршрути D-transport</button></div>
   <div class="card" style="margin-top:12px"><div class="card-title">FLEX — ваша комбінація</div><p class="card-sub">Оберіть спосіб на кожен напрямок.</p>
     <div class="grid-2" style="margin-top:10px">
-      ${selectField({ bind: 'flex.there', label: 'Туди', value: s.flex.there, options: [['taxi', 'Таксі'], ...routeIds] })}
-      ${selectField({ bind: 'flex.back', label: 'Назад', value: s.flex.back, options: [['taxi', 'Таксі'], ...routeIds] })}
+      ${selectField({ bind: 'flex.there', label: 'Туди', value: s.flex.there, options: [taxiOpt, ...routeIds] })}
+      ${selectField({ bind: 'flex.back', label: 'Назад', value: s.flex.back, options: [taxiOpt, ...routeIds] })}
     </div></div>
 
   <h2 class="section-title" id="set-passes">Проїзні<small>Ціна на одну людину. Проїзний — це квиток на строк, а не доплата до кожної поїздки.</small></h2>
@@ -220,6 +259,7 @@ function html(app) {
   </div>
   <p style="margin:14px 2px 8px;font-size:13px;font-weight:600;color:var(--ink-2)">Що покриває проїзний</p>
   ${chipSet('transit.passes.covers', fareModes, s.transit.passes.covers, modeLabel)}
+  <p class="hint">Посадки з окремою ціною в маршруті (напр., Ретро 15 ₴) проїзний не покриває — так обережніше.</p>
   <div class="card-title" style="margin-top:18px">Куплені проїзні</div>
   ${passes.length ? passes.map((p) => `<div class="hist-item"><span class="mode-badge s-zero">${p.type === 'weekly' ? 'ТИЖД.' : 'МІС.'}</span><div class="hist-main"><b>${humanDate(p.start)} – ${humanDate(p.end)}</b><small>${p.persons} ${E.plural(p.persons, ['особа', 'особи', 'осіб'])}</small></div><div class="hist-amt">${E.fmtUAH(p.price)}</div><button type="button" class="icon-btn" data-act="pass-del" data-id="${esc(p.id)}" aria-label="Видалити проїзний">${icon('trash')}</button></div>`).join('') : '<p class="small muted" style="margin-top:6px">Немає. Додайте купівлю — поїздки в період дії рахуватимуться як оплачені.</p>'}
   <button type="button" class="btn small" data-act="pass-add" style="margin-top:10px">${icon('plus')}Додати купівлю</button></div>
@@ -266,8 +306,11 @@ function html(app) {
   <h2 class="section-title" id="set-data">Дані та резервні копії</h2>
   <div class="card stack">
     <p class="small muted">${dataSummary(app, passes.length)} Усе лежить лише в цьому браузері.</p>
+    ${isIOS() ? (isStandalone()
+      ? `<div class="callout">${icon('check')}<span>Відкрито як застосунок з початкового екрана: дані зберігаються, доки ви їх не видалите.</span></div>`
+      : `<div class="callout warn">${icon('warn')}<span>Відкрито в Safari. Safari стирає дані сайтів, які не відкривали 7 днів. Додайте ZERO на початковий екран («Поділитися» → «На початковий екран», рос. «На экран „Домой“»). Дані з вкладки туди не переносяться: зробіть тут «Експорт JSON», а в застосунку — «Імпорт з файлу».</span></div>`) : ''}
     <div class="row wrap"><button type="button" class="btn primary" data-act="export">${icon('download')}Експорт JSON</button><button type="button" class="btn" data-act="copy">${icon('copy')}Копіювати</button></div>
-    <div class="row wrap"><label class="btn" for="import-file">${icon('upload')}Імпорт з файлу</label><input id="import-file" type="file" accept="application/json,.json" hidden><button type="button" class="btn" data-act="paste">Вставити текст</button></div>
+    <div class="row wrap"><label class="btn" for="import-file">${icon('upload')}Імпорт з файлу</label><input id="import-file" type="file" ${isIOS() ? '' : 'accept="application/json,.json"'} hidden><button type="button" class="btn" data-act="paste">Вставити текст</button></div>
     <div class="row wrap"><button type="button" class="btn ghost" data-act="reset-settings">Скинути налаштування</button><button type="button" class="btn danger" data-act="wipe">${icon('trash')}Видалити всі дані</button></div>
   </div>
 
@@ -286,7 +329,7 @@ function dataSummary(app, nPasses) {
 }
 
 function segNum(i, j, key, label, value) {
-  return numField({ bind: `transit.routes.${i}.segments.${j}.${key}`, label, value, unit: 'хв', max: key === 'rideMin' ? 600 : 120, id: `rt-${i}-${j}-${key}` }).replace('data-kind="num"', 'data-kind="num" data-rerender="1"');
+  return rr(numField({ bind: `transit.routes.${i}.segments.${j}.${key}`, label, value, unit: 'хв', max: key === 'rideMin' ? 600 : 120, id: `rt-${i}-${j}-${key}`, assumption: key === 'waitMin' }));
 }
 
 function onAction(app, root, act, t, view) {
@@ -305,10 +348,38 @@ function onAction(app, root, act, t, view) {
     return;
   }
   if (act === 'swap') { app.update((st) => { st.settings.route.swapped = !st.settings.route.swapped; }, { render: false }); toast('Точки поміняно місцями'); return; }
+  if (act === 'tariff') {
+    const tf = app.s.taxi.tariffs.find((x) => x.id === t.dataset.id);
+    if (!tf) return;
+    app.update((st) => { st.settings.taxi.tariff = tf.id; }, { render: false });
+    rerender();
+    toast(`Таксі: ${tf.name} — ${E.fmtUAH(app.s.taxi.price)} в один бік`);
+    return;
+  }
   if (act === 'apply-dist') { const km = Number(t.dataset.km); app.update((st) => { st.settings.car.distanceKm = km; }, { render: false }); rerender(); toast(`Відстань авто: ${E.fmtNum(km, 1)} км`); return; }
   if (act === 'route-add') {
-    app.update((st) => { st.settings.transit.routes.push({ id: uid('r'), name: 'Новий маршрут', enabled: false, confirmed: false, walkEndMin: 5, segments: [{ mode: 'tram', line: '', walkMin: 5, waitMin: 8, rideMin: 20, price: 0 }] }); }, { render: false });
-    rerender(); return;
+    const id = uid('r');
+    openRoutes.add(id);
+    app.update((st) => { st.settings.transit.routes.push({ id, name: 'Новий маршрут', enabled: false, confirmed: false, src: '', walkEndMin: 5, segments: [{ mode: 'tram', line: '', from: '', to: '', stops: 0, walkMin: 5, waitMin: 8, rideMin: 20, price: 0 }] }); }, { render: false });
+    rerender();
+    document.getElementById(`rc-${id}`)?.scrollIntoView({ block: 'start' });
+    return;
+  }
+  if (act === 'routes-reset') {
+    confirmSheet({
+      title: 'Відновити маршрути D-transport?', text: `Маршрути буде замінено п’ятьма маршрутами з D-transport (${ROUTES_SOURCE}). Ваші зміни в маршрутах зникнуть, решта налаштувань і історія залишаться.`, ok: 'Відновити маршрути',
+      onOk: () => {
+        app.update((st) => {
+          const t = st.settings;
+          t.transit.routes = defaultRoutes();
+          if (!t.transit.routes.some((r) => r.id === t.transit.ecoRoute)) t.transit.ecoRoute = 'auto';
+          if (t.flex.there !== 'taxi' && !t.transit.routes.some((r) => r.id === t.flex.there)) t.flex.there = 'taxi';
+          if (t.flex.back !== 'taxi' && !t.transit.routes.some((r) => r.id === t.flex.back)) t.flex.back = 'r1';
+        }, { render: false });
+        rerender(); toast('Маршрути D-transport відновлено');
+      },
+    });
+    return;
   }
   if (act === 'route-del') {
     const i = Number(t.dataset.i);
@@ -325,7 +396,11 @@ function onAction(app, root, act, t, view) {
   }
   if (act === 'seg-add') {
     const i = Number(t.dataset.i);
-    app.update((st) => { st.settings.transit.routes[i].segments.push({ mode: 'trolley', line: '', walkMin: 3, waitMin: 8, rideMin: 15, price: 0 }); }, { render: false });
+    app.update((st) => {
+      const segs = st.settings.transit.routes[i].segments;
+      const prev = segs[segs.length - 1];
+      segs.push({ mode: 'tram', line: '', from: prev?.to || '', to: '', stops: 0, walkMin: 1, waitMin: 8, rideMin: 15, price: 0 });
+    }, { render: false });
     rerender(); return;
   }
   if (act === 'seg-del') {
@@ -347,7 +422,11 @@ function onAction(app, root, act, t, view) {
   if (act === 'theme') { app.setTheme(t.dataset.theme); return; }
   if (act === 'export') {
     const name = `mobility-zero-${app.today()}.json`;
-    shareOrDownload(name, exportJSON(app.state)).then((r) => { if (r !== 'cancelled') toast(r === 'shared' ? 'Резервну копію передано' : `Файл ${name} збережено`); });
+    shareOrDownload(name, exportJSON(app.state)).then((r) => {
+      if (r === 'cancelled') return;
+      const msg = { shared: 'Резервну копію передано', downloaded: `Файл ${name} збережено`, copied: 'Копію скопійовано як текст — вставте її в Нотатки або Файли', failed: 'Не вдалося експортувати — спробуйте «Копіювати»' }[r];
+      toast(msg, { ms: r === 'copied' ? 6000 : 3200 });
+    });
     return;
   }
   if (act === 'copy') { copyText(exportJSON(app.state)).then((ok) => toast(ok ? 'JSON скопійовано' : 'Не вдалося скопіювати — скористайтесь експортом')); return; }
@@ -403,6 +482,7 @@ function reviewImport(app, text) {
     render: () => v.ok
       ? `<p class="muted">Знайдено ${v.summary.trips} ${E.plural(v.summary.trips, ['поїздку', 'поїздки', 'поїздок'])}, ${v.summary.passes} ${E.plural(v.summary.passes, ['проїзний', 'проїзні', 'проїзних'])} і ${v.summary.days} ${E.plural(v.summary.days, ['день', 'дні', 'днів'])} календаря. Поточні дані на цьому пристрої буде замінено.</p>
         ${v.warnings.length ? `<div class="callout warn">${icon('warn')}<span>Виправлено або пропущено ${v.warnings.length} ${E.plural(v.warnings.length, ['значення', 'значення', 'значень'])}:<br>${v.warnings.slice(0, 8).map(esc).join('<br>')}${v.warnings.length > 8 ? '<br>…' : ''}</span></div>` : '<p class="small good">Схема перевірена, помилок немає.</p>'}
+        ${v.migrated?.length ? `<p class="small muted">Стару копію оновлено до актуальних даних: ${esc(v.migrated.join(', '))}.</p>` : ''}
         <div class="sheet-actions"><button type="button" class="btn primary" data-act="apply">Замінити дані</button><button type="button" class="btn" data-act="cancel">Скасувати</button></div>`
       : `<div class="callout warn">${icon('warn')}<span>${v.errors.map(esc).join('<br>')}</span></div><button type="button" class="btn block" data-act="cancel">Зрозуміло</button>`,
     onAction: (act) => {

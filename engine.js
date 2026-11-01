@@ -2,7 +2,7 @@
 // Розрахунковий рушій: без DOM і без сховища, тож його можна перевіряти тестами.
 // Одиниці: гроші — гривні (₴), час — хвилини, відстань — кілометри, пальне — літри.
 
-export const ENGINE_VERSION = '1.0.0';
+export const ENGINE_VERSION = '1.3.0';
 
 /* ───────────────────────── Числа ───────────────────────── */
 
@@ -123,6 +123,27 @@ export const SEGMENT_MODES = {
 };
 export const FARE_MODES = ['tram', 'trolley', 'bus', 'metro'];
 
+// Номери на одному відрізку: «157А, 146А», «157А або 146А», «157А / 146А» — будь-який підходить.
+export function parseLines(str) {
+  const out = [];
+  for (const raw of String(str ?? '').split(/\s*(?:,|;|\/|\||\s+або\s+|\s+чи\s+)\s*/i)) {
+    const t = raw.trim().slice(0, 12);
+    if (t && !out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out;
+}
+
+// Очікування на зупинці. w — скільки в середньому чекати ОДИН номер.
+// Якщо підходять n незалежних номерів із подібним інтервалом, перший приходить за 2w/(n+1):
+// два номери — ⅔ від w, три — ½, чотири — ⅖. Модель рівномірного руху, обережніша за «w/n».
+export const waitAny = (w, n) => (n > 1 ? (2 * w) / (n + 1) : w);
+
+// Окрема ціна посадки (напр., Ретро-трамвай) — спецтариф: звичайний проїзний її не покриває.
+export function isCoverable(f, covers) {
+  if (!f || f.special) return false;
+  return covers instanceof Set ? covers.has(f.mode) : (covers || []).includes(f.mode);
+}
+
 export const PLAN_MODES = ['eco', 'comfort', 'auto', 'taxi', 'flex', 'zero'];
 export const DAY_TYPES = [...PLAN_MODES, 'off', 'away'];
 export const MODE_INFO = {
@@ -143,6 +164,9 @@ export const DEFAULT_STATE = Object.freeze({
 /* ───────────────────────── Допоміжне ───────────────────────── */
 
 export const vehicles = (people, capacity) => Math.max(1, Math.ceil(Math.max(1, people) / Math.max(1, capacity)));
+export const joinOr = (arr) => (arr.length <= 1 ? arr[0] || '' : `${arr.slice(0, -1).join(', ')} або ${arr[arr.length - 1]}`);
+const FOR_GROUP = { 2: 'на двох', 3: 'на трьох', 4: 'на чотирьох' };
+export const forGroup = (P) => (P <= 1 ? '' : FOR_GROUP[P] || `на ${P} осіб`);
 export const routesById = (s) => Object.fromEntries((s.transit.routes || []).map((r) => [r.id, r]));
 export const isPureTransit = (route) => !!route && route.segments.length > 0 && route.segments.every((g) => g.mode !== 'taxi');
 
@@ -155,41 +179,73 @@ const walkFactor = (st) => (st.luggage ? 1.25 : 1) * (st.badWeather ? 1.1 : 1);
 // Скільки людей платять за посадку цього виду транспорту з урахуванням пільги та діючого проїзного.
 // Пільговики рахуються «з кінця» списку пасажирів, власники проїзного — «з початку»,
 // тож одна людина не звільняється двічі.
-export function payersFor(mode, s, ctx) {
+export function payersFor(mode, s, ctx, special = false) {
   const P = s.trip.passengers;
   const b = s.benefit;
   const B = b.enabled && ctx.eligible && b.modes.includes(mode) ? Math.min(b.persons, P) : 0;
-  const K = s.transit.passes.covers.includes(mode) ? Math.min(ctx.passPersons || 0, P) : 0;
+  const K = !special && s.transit.passes.covers.includes(mode) ? Math.min(ctx.passPersons || 0, P) : 0;
   return Math.max(0, P - B - K);
 }
 
 /* ───────────────────────── Відрізки (legs) ───────────────────────── */
 
+// Маршрути задаються в напрямку А → Б. Коли точки поміняно місцями (дорога додому),
+// ті самі номери йдуть у зворотному порядку: зупинки «звідки/куди» міняються, ходьба зсувається.
+// Сума часу й ціна від цього не змінюються — лише порядок кроків.
+export function orientedSegments(route, swapped = false) {
+  const segs = route.segments;
+  if (!swapped || !segs.length) return { segments: segs, walkEndMin: route.walkEndMin };
+  const n = segs.length;
+  const out = [];
+  for (let k = n - 1; k >= 0; k--) {
+    const g = segs[k];
+    out.push({ ...g, from: g.to || '', to: g.from || '', walkMin: k === n - 1 ? route.walkEndMin : segs[k + 1].walkMin });
+  }
+  return { segments: out, walkEndMin: segs[0].walkMin };
+}
+
 export function transitLeg(route, s, ctx) {
   const st = ctx.state, P = s.trip.passengers;
+  const { segments, walkEndMin } = orientedSegments(route, !!s.route?.swapped);
   const wf = walkFactor(st);
   const ptSlow = 1 + (s.misc.ptSlowPct || 0) / 100;
-  let walk = 0, wait = 0, ride = 0, boardings = 0, taxiSegs = 0, maxWait = 0;
+  let walk = 0, wait = 0, ride = 0, boardings = 0, taxiSegs = 0, maxWait = 0, spare = 0;
   let wSum = 0, cAcc = 0, rAcc = 0, ptRide = 0, trafAcc = 0, variance = 0;
   let transitCost = 0, taxiCost = 0;
   const fares = [];
-  for (const g of route.segments) {
+  const steps = [];
+  for (const g of segments) {
     const m = SEGMENT_MODES[g.mode] || SEGMENT_MODES.tram;
-    walk += g.walkMin * wf;
-    if (g.mode === 'walk') { walk += g.rideMin * wf; continue; }
+    const gWalk = g.walkMin * wf;
+    walk += gWalk;
+    if (g.mode === 'walk') {
+      walk += g.rideMin * wf;
+      steps.push({ kind: 'walk', mode: 'walk', lines: [], n: 0, from: g.from || '', to: g.to || '', stops: 0, walk: gWalk + g.rideMin * wf, wait: 0, wait1: 0, ride: 0, fare: 0, cost: 0, special: false });
+      continue;
+    }
     const r = g.rideMin * trafficFactor(s, st, m.traffic) * (g.mode === 'taxi' ? 1 : ptSlow);
-    let gw = g.waitMin;
+    const lines = parseLines(g.line);
+    const n = Math.max(1, lines.length);
+    let gw, fare = 0, cost = 0, special = false;
     if (g.mode === 'taxi') {
-      gw += st.badWeather ? 3 : 0;
+      gw = g.waitMin + (st.badWeather ? 3 : 0);
       taxiSegs += 1;
-      taxiCost += g.price * vehicles(P, s.taxi.capacity);
+      cost = g.price * vehicles(P, s.taxi.capacity);
+      fare = g.price;
+      taxiCost += cost;
     } else {
+      // Кілька номерів на зупинці: сідаємо в перший, що прийде, — чекаємо менше.
+      gw = waitAny(g.waitMin, n);
+      spare += n - 1;
       boardings += 1;
       ptRide += r;
-      const fare = s.transit.fares[g.mode] ?? 0;
-      fares.push({ mode: g.mode, fare });
-      transitCost += fare * payersFor(g.mode, s, ctx);
+      special = g.price > 0;
+      fare = special ? g.price : s.transit.fares[g.mode] ?? 0;
+      fares.push({ mode: g.mode, fare, special });
+      cost = fare * payersFor(g.mode, s, ctx, special);
+      transitCost += cost;
     }
+    steps.push({ kind: g.mode === 'taxi' ? 'taxi' : 'ride', mode: g.mode, lines, n, from: g.from || '', to: g.to || '', stops: g.stops || 0, walk: gWalk, wait: gw, wait1: g.waitMin, ride: r, fare, cost, special });
     wait += gw;
     maxWait = Math.max(maxWait, gw);
     ride += r;
@@ -199,7 +255,7 @@ export function transitLeg(route, s, ctx) {
     trafAcc += m.traffic * r;
     variance += r * (m.variance + (st.traffic ? m.traffic * 0.15 : 0));
   }
-  walk += route.walkEndMin * wf;
+  walk += walkEndMin * wf;
   const transfers = Math.max(0, boardings + taxiSegs - 1);
   const ptShare = wSum > 0 ? ptRide / wSum : 0;
   const trafShare = wSum > 0 ? trafAcc / wSum : 0;
@@ -213,21 +269,36 @@ export function transitLeg(route, s, ctx) {
 
   let reliability = (wSum > 0 ? rAcc / wSum : 92) - 6 * transfers - (route.confirmed ? 0 : 10);
   reliability -= 0.6 * Math.max(0, maxWait - 6);
+  // Запасні номери на тій самій зупинці: зірваний рейс одного номера вже не зриває поїздку.
+  reliability += Math.min(6, 3 * spare);
   if (st.badWeather) reliability -= 4;
   if (st.traffic) reliability -= 18 * trafShare;
 
   const buffer = Math.max(2, Math.round(variance + 2 * transfers + (route.confirmed ? 0 : 4) + (st.traffic ? 3 : 0) + (st.badWeather ? 2 : 0)));
   return {
-    kind: 'route', id: route.id, label: route.name, confirmed: !!route.confirmed, pure: taxiSegs === 0,
-    minutes: walk + wait + ride, walk, wait, ride, boardings, transfers,
-    transitCost, taxiCost, cost: transitCost + taxiCost, fares,
+    kind: 'route', id: route.id, label: route.name, confirmed: !!route.confirmed, pure: taxiSegs === 0, src: route.src || '',
+    minutes: walk + wait + ride, walk, wait, ride, boardings, transfers, spare,
+    transitCost, taxiCost, cost: transitCost + taxiCost, fares, steps, walkEnd: walkEndMin * wf,
     comfort: clamp(comfort, 5, 98), reliability: clamp(reliability, 5, 98), buffer,
     outdoor: walk + wait,
   };
 }
 
+// Обраний тариф таксі (Bolt, Priority…) або null, якщо ціна своя.
+export const selectedTariff = (s) => (s.taxi.tariffs || []).find((t) => t.id === s.taxi.tariff) || null;
+
+// Підказка щодо тарифу під сьогоднішній стан: поспіх — Priority, багаж — Comfort.
+export function taxiTariffTip(s, st = DEFAULT_STATE) {
+  const list = s.taxi.tariffs || [];
+  const by = (id) => list.find((t) => t.id === id);
+  const base = s.taxi.price;
+  const tip = (t, why) => (t && t.id !== s.taxi.tariff && t.price > base ? { tariff: t, extra: (t.price - base) * vehicles(s.trip.passengers, s.taxi.capacity), why } : null);
+  return (st.hurry && tip(by('priority'), 'авто знайдуть швидше')) || (st.luggage && tip(by('comfort'), 'більше місця для речей')) || null;
+}
+
 export function taxiLeg(s, ctx) {
   const st = ctx.state, P = s.trip.passengers;
+  const tariff = selectedTariff(s);
   const veh = vehicles(P, s.taxi.capacity);
   const wait = s.taxi.waitMin + (st.badWeather ? 3 : 0);
   const ride = s.taxi.rideMin * trafficFactor(s, st, 1);
@@ -235,7 +306,7 @@ export function taxiLeg(s, ctx) {
   const comfort = 88 - wait * (st.badWeather ? 0.5 : 0.25) - (st.traffic ? 6 : 0);
   const reliability = 78 - (st.badWeather ? 10 : 0) - (st.traffic ? 16 : 0) - Math.max(0, wait - 8) * 0.5;
   return {
-    kind: 'taxi', id: 'taxi', label: 'Таксі', confirmed: true, pure: false,
+    kind: 'taxi', id: 'taxi', label: tariff ? `Таксі ${tariff.name}` : 'Таксі', tariff, confirmed: true, pure: false,
     minutes: wait + ride, walk: 0, wait, ride, boardings: 0, transfers: 0,
     transitCost: 0, taxiCost: cost, cost, fares: [], vehicles: veh,
     comfort: clamp(comfort, 5, 98), reliability: clamp(reliability, 5, 98),
@@ -493,11 +564,11 @@ function explain(res, s) {
         const dm = alt.minutes - best.minutes;
         if (dm >= 1) reasons.push({ k, text: `На ${fmtMin(dm)} менше в дорозі, ніж ${an}` });
       } else if (k === 'comfort') {
-        let why = 'комфортніше';
-        if (best.transfers < alt.transfers) why = 'менше пересадок';
-        else if (st.tired && alt.isCar && !best.isCar) why = 'не треба самому кермувати';
-        else if (best.outdoor + 5 < alt.outdoor) why = 'менше часу на вулиці';
-        reasons.push({ k, text: `${why[0].toUpperCase()}${why.slice(1)}, ніж ${an}` });
+        let text = `Комфортніше, ніж ${an}`;
+        if (best.transfers < alt.transfers) text = `Менше пересадок, ніж ${an}`;
+        else if (st.tired && alt.isCar && !best.isCar) text = `Не треба кермувати самому, на відміну від ${an}`;
+        else if (best.outdoor + 5 < alt.outdoor) text = `Менше часу на вулиці, ніж ${an}`;
+        reasons.push({ k, text });
       } else if (k === 'reliability') {
         let why = 'передбачуваніший час прибуття';
         if (best.transfers < alt.transfers) why = 'менше пересадок — менше ризику запізнитись';
@@ -507,24 +578,121 @@ function explain(res, s) {
     }
     const worst = diffs[diffs.length - 1];
     if (worst && worst.d < -0.5) {
-      if (worst.k === 'cost') tradeoff = `Але дорожче на ${fmtGrn(best.cost.decision - alt.cost.decision)}, ніж ${an}`;
-      if (worst.k === 'speed') tradeoff = `Але довше на ${fmtMin(best.minutes - alt.minutes)} за ${st.roundTrip !== false ? 'день' : 'поїздку'}, ніж ${an}`;
-      if (worst.k === 'comfort') tradeoff = `Але менш комфортно, ніж ${an}`;
-      if (worst.k === 'reliability') tradeoff = `Але вищий ризик запізнення, ніж ${an}`;
+      // Якщо альтернативу вже названо в причині, вдруге її не повторюємо.
+      const than = reasons[0]?.text.includes(an) ? '' : `, ніж ${an}`;
+      if (worst.k === 'cost') tradeoff = `Але дорожче на ${fmtGrn(best.cost.decision - alt.cost.decision)}${than}`;
+      if (worst.k === 'speed') tradeoff = `Але довше на ${fmtMin(best.minutes - alt.minutes)} за ${st.roundTrip !== false ? 'день' : 'поїздку'}${than}`;
+      if (worst.k === 'comfort') tradeoff = `Але менш комфортно${than}`;
+      if (worst.k === 'reliability') tradeoff = `Але вищий ризик запізнення${than}`;
     }
     const gap = best.total - alt.total;
     res.close = gap < 3;
-    if (gap < 3) notes.push({ tone: 'info', text: `Відрив від ${an} лише ${fmtNum(gap, 1)} бала — обидва варіанти прийнятні` });
+    const g1 = Math.round(gap * 10) / 10;
+    const pts = Number.isInteger(g1) ? plural(g1, ['бал', 'бали', 'балів']) : 'бала';
+    if (gap < 3) notes.push({ tone: 'info', text: `Відрив від ${an} лише ${fmtNum(g1, 1)} ${pts} — обидва варіанти прийнятні` });
   }
   if (!reasons.length) reasons.push({ k: 'total', text: `Найкращий баланс ваших пріоритетів: ${Math.round(best.total)} зі 100` });
 
   if (st.tired && !best.isCar) notes.push({ tone: 'good', text: 'Ви втомлені — обрано варіант без самостійного керування' });
   if (st.tired && best.isCar) notes.push({ tone: 'warn', text: 'Ви позначили втому: за кермом будьте уважні або оберіть таксі' });
   if (best.unconfirmed) notes.push({ tone: 'warn', text: 'Маршрут орієнтовний: перевірте зупинки й інтервали в D-transport' });
+  const multi = best.there.kind === 'route' ? best.there.steps.find((x) => x.kind === 'ride' && x.n > 1) : null;
+  if (multi) notes.push({ tone: 'good', text: `Не чекайте один номер: сідайте в перший із ${joinOr(multi.lines)} — очікування ≈${fmtMin(multi.wait)} замість ≈${fmtMin(multi.wait1)}` });
   if (ctx.eligible && s.benefit.enabled && best.legs.some((l) => l.kind === 'route')) notes.push({ tone: 'info', text: 'Пільгу враховано, бо ви підтвердили відповідність поїздки умовам' });
-  if (ctx.passPersons > 0 && best.legs.some((l) => l.fares.some((f) => s.transit.passes.covers.includes(f.mode)))) notes.push({ tone: 'info', text: 'Діє придбаний проїзний: покриті посадки вже оплачені' });
+  if (ctx.passPersons > 0 && best.legs.some((l) => l.fares.some((f) => isCoverable(f, s.transit.passes.covers)))) notes.push({ tone: 'info', text: 'Діє придбаний проїзний: покриті посадки вже оплачені' });
   if (st.badWeather && best.outdoor > 15) notes.push({ tone: 'warn', text: `Погана погода: близько ${fmtMin(best.outdoor)} пішки й на зупинках` });
+  const tt = best.legs.some((l) => l.kind === 'taxi') ? taxiTariffTip(s, st) : null;
+  if (tt) notes.push({ tone: 'info', text: `Тариф ${tt.tariff.name} дорожчий лише на ${fmtGrn(tt.extra)} за поїздку — ${tt.why}` });
   return { reasons, tradeoff, notes, close: !!res.close };
+}
+
+/* ───────────────────────── На зупинці: «а якщо першим прийде інший номер?» ───────────────────────── */
+
+const normStop = (x) => String(x || '').toLowerCase().replace(/[«»"'’ʼ`]/g, '').replace(/\s+/g, ' ').trim();
+
+// Час і гроші від моменту посадки на відрізку k (без очікування на ньому) до точки Б.
+function remainderFrom(leg, k) {
+  let t = leg.steps[k].ride, cost = 0;
+  for (let j = k + 1; j < leg.steps.length; j++) { const x = leg.steps[j]; t += x.walk + x.wait + x.ride; }
+  for (let j = k; j < leg.steps.length; j++) cost += leg.steps[j].cost;
+  return { t: t + leg.walkEnd, cost };
+}
+
+// Що робити, коли на зупинці першим приходить номер з іншого маршруту.
+// Порівнюємо: «сісти зараз і їхати далі тим маршрутом» проти «дочекатися свого номера».
+// Вердикт: take — сідайте; hurry — швидше, але дорожче; cheaper — дешевше, але довше; skip — не варто.
+export function stopAdvice(s, routeOrId, ctxIn = {}) {
+  const ctx = makeCtx(ctxIn);
+  const byId = routesById(s);
+  const route = typeof routeOrId === 'string' ? byId[routeOrId] : routeOrId;
+  if (!route || !route.segments.length) return [];
+  const leg = transitLeg(route, s, ctx);
+  const others = s.transit.routes.filter((r) => r.enabled && r.segments.length && r.id !== route.id).map((r) => ({ r, leg: transitLeg(r, s, ctx) }));
+  const hv = s.trip.hourValue || 0, P = s.trip.passengers;
+  const out = [];
+  leg.steps.forEach((st, k) => {
+    if (st.kind !== 'ride') return;
+    const here = normStop(st.from);
+    if (!here) return;
+    const mine = new Set(st.lines.map((x) => x.toLowerCase()));
+    const cur = remainderFrom(leg, k);
+    const stay = st.wait + cur.t;
+    const best = new Map();
+    for (const o of others) {
+      o.leg.steps.forEach((x, j) => {
+        if (x.kind !== 'ride' || normStop(x.from) !== here) return;
+        const rem = remainderFrom(o.leg, j);
+        const saved = stay - rem.t, dCost = rem.cost - cur.cost;
+        const after = o.leg.steps.slice(j + 1).filter((y) => y.kind === 'ride' || y.kind === 'taxi');
+        const next = after.length ? `далі ${after.map((y) => `${SEGMENT_MODES[y.mode].label.split(' /')[0].toLowerCase()} ${y.lines.join('/')}`.trim()).join(', ')}` : `до «${x.to || 'кінцевої'}»`;
+        for (const ln of x.lines) {
+          const key = ln.toLowerCase();
+          if (mine.has(key)) continue;
+          const prev = best.get(key);
+          if (!prev || saved > prev.saved + 0.5 || (Math.abs(saved - prev.saved) <= 0.5 && dCost < prev.dCost)) {
+            best.set(key, { line: ln, mode: x.mode, routeId: o.r.id, routeName: o.r.name, next, saved, dCost });
+          }
+        }
+      });
+    }
+    if (!best.size) return;
+    const groups = new Map();
+    for (const a of best.values()) {
+      const faster = a.saved >= 1, slower = a.saved <= -1, pricier = a.dCost > 0.5, cheaper = a.dCost < -0.5;
+      let verdict;
+      if (!slower && !pricier) verdict = 'take';
+      else if (faster && pricier) verdict = hv > 0 ? ((a.saved / 60) * hv * P >= a.dCost ? 'take' : 'costly') : ctx.state.hurry ? 'take' : 'hurry';
+      else if (slower && cheaper) verdict = 'cheaper';
+      else verdict = 'skip';
+      const gk = `${a.routeId}|${verdict}`;
+      const g = groups.get(gk) || { ...a, lines: [], verdict };
+      g.lines.push(a.line);
+      groups.set(gk, g);
+    }
+    const rank = { take: 0, hurry: 1, cheaper: 2, costly: 3, skip: 4 };
+    const alts = [...groups.values()].sort((a, b) => (rank[a.verdict] - rank[b.verdict]) || (b.saved - a.saved)).slice(0, 4);
+    out.push({ k, stop: st.from, lines: st.lines, n: st.n, wait: st.wait, wait1: st.wait1, transfer: k > 0, alts });
+  });
+  return out;
+}
+
+// Коротка порада для однієї альтернативи. P — кількість пасажирів (сума — на всіх).
+export function adviceText(a, P = 1) {
+  const who = forGroup(P) ? ` ${forGroup(P)}` : '';
+  const faster = `≈${fmtMin(a.saved)} швидше`;
+  switch (a.verdict) {
+    case 'take': {
+      if (a.dCost > 0.5) return `сідайте: ${faster}, +${fmtGrn(a.dCost)}${who}`;
+      const parts = [];
+      if (a.saved >= 1) parts.push(faster);
+      if (a.dCost < -0.5) parts.push(`на ${fmtGrn(-a.dCost)} дешевше${who}`);
+      return parts.length ? `сідайте: ${parts.join(' і ')}` : 'сідайте: це не гірше';
+    }
+    case 'hurry': return `сідайте, якщо поспішаєте: ${faster}, але +${fmtGrn(a.dCost)}${who}`;
+    case 'cheaper': return `можна, якщо не поспішаєте: на ${fmtGrn(-a.dCost)} дешевше${who}, але довше ≈${fmtMin(-a.saved)}`;
+    case 'costly': return `не варто за ціною вашої години: ${faster}, але +${fmtGrn(a.dCost)}${who}`;
+    default: return `не варто: ${a.saved <= -1 ? `довше ≈${fmtMin(-a.saved)}` : 'не швидше'}${a.dCost > 0.5 ? `, +${fmtGrn(a.dCost)}${who}` : ''}`;
+  }
 }
 
 /* ───────────────────────── Календар, пільга, проїзні ───────────────────────── */
@@ -651,7 +819,7 @@ export function computePeriod(s, cal, hist, opt = {}) {
       let cov = 0, unc = 0;
       for (const l of ev.legs) for (const f of l.fares) {
         if (benefitPerson && d.eligible && s.benefit.modes.includes(f.mode)) continue;
-        if (covers.has(f.mode)) { if (ownedCover) ownedUsed += f.fare; else cov += f.fare; } else unc += f.fare;
+        if (isCoverable(f, covers)) { if (ownedCover) ownedUsed += f.fare; else cov += f.fare; } else unc += f.fare;
       }
       uncoverable[i] += unc;
       d.transit += unc;
@@ -1026,10 +1194,37 @@ export function findLeaks(s, cal, hist, { today }) {
   if (taxi) add('taxi-days', taxi.saving, `${dn(taxi.n)} із таксі за планом ${plural(taxi.n, ['коштує', 'коштують', 'коштують'])} на ${fmtGrn(taxi.saving)} більше, ніж ECO. Залиште таксі для важких днів — їх оплачує банк комфорту.`, { tab: 'calendar', label: 'Змінити план' });
   const parking = carDays.reduce((a, d) => a + d.parking, 0);
   if (parking > 0 && !(s.car.freeParkWalkMin > 0)) add('parking', parking, `Паркування — ${fmtGrn(parking)} за ${dn(carDays.length)} авто. Знайдіть безкоштовне місце за кілька хвилин пішки й укажіть його в налаштуваннях авто — ця витрата зникне.`, { tab: 'settings', anchor: 'set-car', label: 'Налаштувати авто' });
+  // Дешевший маршрут ГТ з урахуванням проїзних: напр., маршрутка щодня проти трамвая з місячним проїзним.
+  const routeDays = plan.days.filter((d) => d.trip && typeof d.key === 'string' && /^r:([^|]+)\|(r:\1|-)$/.test(d.key));
+  if (routeDays.length) {
+    const count = new Map();
+    for (const d of routeDays) { const id = d.key.slice(2).split('|')[0]; count.set(id, (count.get(id) || 0) + 1); }
+    const curId = [...count.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const byId = routesById(s);
+    let bestAlt = null;
+    for (const r of s.transit.routes.filter((x) => x.enabled && x.segments.length && isPureTransit(x))) {
+      if (count.size === 1 && r.id === curId) continue;
+      const s2 = structuredCloneSafe(s);
+      s2.transit.ecoRoute = r.id;
+      const t = { ...types };
+      for (const d of routeDays) t[d.date] = 'eco';
+      const alt = computePeriod(s2, cal, hist, { from, to, dayTypes: t });
+      if (alt.unavailable) continue;
+      const saving = plan.totals.decision - alt.totals.decision;
+      if (!bestAlt || saving > bestAlt.saving + 1e-9) bestAlt = { r, saving, alt };
+    }
+    if (bestAlt) {
+      const perDay = (bestAlt.alt.totals.minutes - plan.totals.minutes) / routeDays.length;
+      const withPass = bestAlt.alt.purchases.length > 0 && !plan.purchases.length;
+      const time = perDay >= 1 ? `, але +${fmtMin(perDay)} у дорозі щодня` : perDay <= -1 ? ` і ще на ${fmtMin(-perDay)} швидше щодня` : '';
+      add('route', bestAlt.saving, `«${bestAlt.r.name}»${withPass ? ' з проїзними' : ''} замість «${byId[curId]?.name || 'поточного маршруту'}»: за 30 днів на ${fmtGrn(bestAlt.saving)} менше${time}.`,
+        withPass ? { tab: 'savings', act: 'pass', type: bestAlt.alt.purchases[0].type, label: 'Записати купівлю проїзного' } : { tab: 'savings', act: 'eco-route', id: bestAlt.r.id, label: `Обрати «${bestAlt.r.name}»` });
+    }
+  }
   const S = plan.strategies;
   if (plan.purchases.length && S.singles - S.optimal >= 1) {
     const f = plan.purchases[0];
-    add('pass', S.singles - S.optimal, `Проїзний замість разових квитків: ${fmtGrn(S.singles)} → ${fmtGrn(S.optimal)} за 30 днів. Перша купівля — ${fmtDayMonth(f.start)}.`, { tab: 'savings', act: 'pass', label: 'Записати купівлю' });
+    add('pass', S.singles - S.optimal, `Проїзний замість разових квитків: ${fmtGrn(S.singles)} → ${fmtGrn(S.optimal)} за 30 днів. Перша купівля — ${fmtDayMonth(f.start)}.`, { tab: 'savings', act: 'pass', type: f.type, label: 'Записати купівлю' });
   }
   const mFrom = monthStart(today), mTo = monthEnd(today);
   const ecoPaid = (hist || []).filter((r) => r.kind === 'trip' && r.mode === 'eco' && r.date >= mFrom && r.date <= mTo).reduce((a, r) => a + r.cost, 0);

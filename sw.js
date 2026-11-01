@@ -1,7 +1,7 @@
 // MOBILITY ZERO — sw.js
 // Офлайн-кеш. Після будь-яких змін у файлах збільште VERSION — інакше телефони триматимуть стару версію.
 
-const VERSION = 'mz-1.1.0';
+const VERSION = 'mz-1.3.0';
 const ASSETS = [
   './', './index.html', './styles.css',
   './app.js', './engine.js', './store.js', './ui.js', './charts.js', './assistant.js', './sheets.js',

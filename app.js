@@ -2,8 +2,8 @@
 // Контролер: стан, збереження, перемикання вкладок, кеш розрахунків, тема, service worker.
 
 import * as E from './engine.js';
-import { loadState, saveState, APP_VERSION } from './store.js';
-import { $, $$, toast, initSheet } from './ui.js';
+import { loadState, saveState, normalizeState, taxiSnapshot, syncTaxi, STORAGE_KEY, APP_VERSION } from './store.js';
+import { $, $$, toast, initSheet, isIOS } from './ui.js';
 import { buildInsights } from './assistant.js';
 import home from './view-home.js';
 import compare from './view-compare.js';
@@ -35,9 +35,13 @@ export const app = {
 
   // Усі зміни стану йдуть сюди: кеш скидається, дані зберігаються, вкладки позначаються «застарілими».
   update(mutator, { render = true } = {}) {
+    const s0 = this.state.settings;
+    const taxi0 = taxiSnapshot(s0);
     mutator(this.state);
     const s = this.state.settings;
     s.benefit.persons = Math.min(s.benefit.persons, s.trip.passengers);
+    // Основна ціна таксі й ціна обраного тарифу змінюються разом. Якщо налаштування замінили цілком — беремо ціну тарифу.
+    syncTaxi(s, s === s0 ? taxi0 : null);
     this.version += 1;
     this.cache.clear();
     this.persistSoon();
@@ -167,7 +171,26 @@ export const app = {
 };
 
 /* ───────── Запуск ───────── */
+// Safari на iPhone: :active (натискання з відгуком) працює лише за наявності touchstart-слухача;
+// нижня панель ховається, поки відкрита екранна клавіатура — як у застосунках iPhone.
+// Клавіатуру визначаємо за тим, що видима область стала нижчою: так док не зникає на iPad
+// з фізичною клавіатурою чи на комп’ютері, де екранної клавіатури немає.
+function touchPolish() {
+  document.addEventListener('touchstart', () => {}, { passive: true });
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const typing = (el) => !!el?.matches?.('input:not([type=checkbox]):not([type=range]):not([type=file]), textarea, select');
+  const check = () => {
+    const open = typing(document.activeElement) && window.innerHeight - vv.height * vv.scale > 140;
+    document.documentElement.classList.toggle('kb-open', open);
+  };
+  vv.addEventListener('resize', check);
+  document.addEventListener('focusin', () => setTimeout(check, 350));
+  document.addEventListener('focusout', () => setTimeout(check, 80));
+}
+
 function start() {
+  touchPolish();
   initSheet();
   // Зміни, зроблені в аркуші (стан ранку, пріоритети), одразу видно на екрані під ним.
   $('#sheet').addEventListener('close', () => { if (app.dirty.has(app.tab)) app.renderActive(); });
@@ -193,6 +216,18 @@ function start() {
     if (document.visibilityState === 'hidden') app.persistNow(); else tick();
   });
   window.addEventListener('pagehide', () => app.persistNow());
+  // Дані змінили в іншій вкладці — беремо новіші, щоб не перезаписати їх старими при закритті цієї.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return;
+    try {
+      app.state = normalizeState(JSON.parse(e.newValue));
+      app.version += 1;
+      app.cache.clear();
+      for (const k of Object.keys(VIEWS)) app.dirty.add(k);
+      app.applyTheme();
+      app.renderActive();
+    } catch { /* пошкоджений запис з іншої вкладки ігноруємо */ }
+  });
 
   let resizeTimer = 0;
   let lastW = window.innerWidth;
@@ -204,7 +239,13 @@ function start() {
   window.addEventListener('offline', () => VIEWS[app.tab] === home && app.renderActive());
 
   registerSW();
+  // Просимо браузер не стирати дані автоматично (Safari 17+, Chrome). Відмова нічого не ламає.
+  try { navigator.storage?.persist?.()?.catch?.(() => {}); } catch { /* немає Storage API */ }
   if (boot.error) toast('Збережені дані пошкоджені — відкрито стартові налаштування.', { ms: 5000 });
+  else if (boot.migrated?.length) {
+    app.persistNow();
+    toast(`Оновлено до ${APP_VERSION}: ${boot.migrated.join(', ')}.`, { ms: 7000 });
+  }
   window.__MZ_READY = true;
   window.__MZ = app;
 }
@@ -215,6 +256,13 @@ function registerSW() {
   if (!secure) return;
   let requested = false;
   navigator.serviceWorker.register('./sw.js').then((reg) => {
+    // iPhone тримає застосунок у пам’яті днями: перевіряємо нову версію, коли його знову відкривають (не частіше ніж раз на 30 хв).
+    let lastCheck = Date.now();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || Date.now() - lastCheck < 30 * 60000) return;
+      lastCheck = Date.now();
+      reg.update().catch(() => {});
+    });
     const offer = (w) => toast('Доступна нова версія MOBILITY ZERO', {
       action: 'Оновити',
       onAction: () => { requested = true; w.postMessage({ type: 'SKIP_WAITING' }); },

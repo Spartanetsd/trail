@@ -6,30 +6,66 @@ import { toNum, clamp, isDateStr, parseHM, fmtHM, PLAN_MODES, DAY_TYPES, FARE_MO
 export const STORAGE_KEY = 'mobility-zero:v1';
 export const SCHEMA = 'mobility-zero';
 export const SCHEMA_VERSION = 1;
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.3.0';
+// Ревізія стартових значень. Коли вона зростає, збережені дані з незмінними старими значеннями оновлюються.
+export const DEFAULTS_REV = 3;
+export const ROUTES_SOURCE = 'D-transport, 01.11.2026';
+export const TAXI_SOURCE = 'Bolt, 01.11.2026, 05:01';
+
+// Тарифи таксі в один бік (скріншоти Bolt користувача; «Send» — доставка посилок, для поїздок не потрібен).
+export function defaultTariffs() {
+  return [
+    { id: 'bolt', name: 'Bolt', price: 189, note: 'звичайні поїздки' },
+    { id: 'priority', name: 'Priority', price: 199, note: 'авто знайдуть швидше' },
+    { id: 'pet', name: 'Pet', price: 209, note: 'поїздки з тваринами' },
+    { id: 'comfort', name: 'Comfort', price: 229, note: 'просторіші авто' },
+    { id: 'business', name: 'Business', price: 259, note: 'бізнес-клас' },
+  ];
+}
+
+// Основна ціна таксі (taxi.price) і ціна обраного тарифу завжди однакові.
+// before — знімок до зміни: так зрозуміло, що саме змінили — тариф, основну ціну чи ціну тарифу.
+export function taxiSnapshot(s) {
+  const sel = (s.taxi.tariffs || []).find((t) => t.id === s.taxi.tariff);
+  return { price: s.taxi.price, tariff: s.taxi.tariff, sel: sel ? sel.price : null };
+}
+export function syncTaxi(s, before = null) {
+  const sel = (s.taxi.tariffs || []).find((t) => t.id === s.taxi.tariff);
+  if (!sel) { if (s.taxi.tariff) s.taxi.tariff = ''; return; }
+  if (!before || s.taxi.tariff !== before.tariff) s.taxi.price = sel.price;
+  else if (s.taxi.price !== before.price) sel.price = s.taxi.price;
+  else if (sel.price !== before.sel) s.taxi.price = sel.price;
+}
 
 /* ───────────────────────── Стартові дані ───────────────────────── */
 
+// Маршрути з D-transport (скріншоти користувача, 01.11.2026). Час руху й пішки — з D-transport;
+// очікування одного номера (8 хв) — припущення: уточніть уранці.
+const seg = (mode, line, from, to, stops, walkMin, rideMin, price = 0) => ({ mode, line, from, to, stops, walkMin, waitMin: 8, rideMin, price });
+const t15 = () => seg('tram', '15', 'вул. Олександра Кошиця', 'Залізничний вокзал', 8, 3, 13);
 export function defaultRoutes() {
+  const r = (id, name, walkEndMin, segments) => ({ id, name, enabled: true, confirmed: true, src: ROUTES_SOURCE, walkEndMin, segments });
   return [
-    {
-      id: 'r1', name: 'Трамвай №15', enabled: true, confirmed: false, walkEndMin: 7,
-      segments: [{ mode: 'tram', line: '15', walkMin: 8, waitMin: 8, rideMin: 32, price: 0 }],
-    },
-    {
-      id: 'r2', name: 'Трамвай №1 + тролейбус №4', enabled: false, confirmed: false, walkEndMin: 5,
-      segments: [
-        { mode: 'tram', line: '1', walkMin: 6, waitMin: 8, rideMin: 18, price: 0 },
-        { mode: 'trolley', line: '4', walkMin: 5, waitMin: 9, rideMin: 14, price: 0 },
-      ],
-    },
-    {
-      id: 'r3', name: 'Метро + тролейбус №4', enabled: false, confirmed: false, walkEndMin: 5,
-      segments: [
-        { mode: 'metro', line: 'М', walkMin: 12, waitMin: 5, rideMin: 10, price: 0 },
-        { mode: 'trolley', line: '4', walkMin: 6, waitMin: 9, rideMin: 14, price: 0 },
-      ],
-    },
+    r('r1', 'Трамвай 15 → 1', 6, [t15(), seg('tram', '1', 'Залізничний вокзал', 'вул. Січових Стрільців', 8, 1, 14)]),
+    r('r2', 'Маршрутка 157А / 146А', 6, [seg('bus', '157А, 146А', 'вул. Володимира Самодриги', 'Кельнський бульвар', 15, 4, 25)]),
+    r('r3', 'Маршрутка 90 / 75К → трамвай 1', 6, [
+      seg('bus', '90, 75К', 'вул. Володимира Самодриги', 'Залізничний вокзал', 8, 4, 14),
+      seg('tram', '1', 'Залізничний вокзал', 'вул. Січових Стрільців', 8, 2, 14),
+    ]),
+    r('r4', 'Маршрутка 90 → тролейбус 4', 6, [
+      seg('bus', '90', 'вул. Володимира Самодриги', 'вул. Аудиторна', 4, 4, 6),
+      seg('trolley', '4', 'вул. Аудиторна', 'Кельнський бульвар', 12, 0, 22),
+    ]),
+    r('r5', 'Трамвай 15 → Ретро', 8, [t15(), seg('tram', 'Ретро', 'Залізничний вокзал', 'вул. Центральна', 7, 1, 12, 15)]),
+  ];
+}
+
+// Стартові маршрути версій 1.0–1.1 — лише щоб розпізнати незмінені дані під час оновлення.
+export function legacyRoutesV1() {
+  return [
+    { id: 'r1', name: 'Трамвай №15', enabled: true, confirmed: false, walkEndMin: 7, segments: [{ mode: 'tram', line: '15', walkMin: 8, waitMin: 8, rideMin: 32, price: 0 }] },
+    { id: 'r2', name: 'Трамвай №1 + тролейбус №4', enabled: false, confirmed: false, walkEndMin: 5, segments: [{ mode: 'tram', line: '1', walkMin: 6, waitMin: 8, rideMin: 18, price: 0 }, { mode: 'trolley', line: '4', walkMin: 5, waitMin: 9, rideMin: 14, price: 0 }] },
+    { id: 'r3', name: 'Метро + тролейбус №4', enabled: false, confirmed: false, walkEndMin: 5, segments: [{ mode: 'metro', line: 'М', walkMin: 12, waitMin: 5, rideMin: 10, price: 0 }, { mode: 'trolley', line: '4', walkMin: 6, waitMin: 9, rideMin: 14, price: 0 }] },
   ];
 }
 
@@ -43,12 +79,12 @@ export function defaultSettings() {
     trip: { passengers: 2, arriveBy: '08:30', returnDefault: true, defaultMode: 'zero', workDays: [0, 1, 2, 3, 4], hourValue: 0 },
     car: {
       name: 'Opel Astra H 1.6 (2006)', distanceKm: 7, consumption: 9, fuelPrice: 89.38, wearPerKm: 3,
-      parkingPerHour: 15, parkingHours: 6, driveMin: 20, parkWalkMin: 6, fixedMonthly: 0, capacity: 5,
+      parkingPerHour: 18, parkingHours: 6, driveMin: 20, parkWalkMin: 6, fixedMonthly: 0, capacity: 5,
       winter: false, winterExtraPct: 15, trafficFuelPct: 15, includeWear: true, freeParkWalkMin: 0,
     },
-    taxi: { price: 160, waitMin: 7, rideMin: 20, capacity: 4 },
+    taxi: { price: 189, waitMin: 7, rideMin: 20, capacity: 4, tariff: 'bolt', tariffs: defaultTariffs(), src: TAXI_SOURCE },
     transit: {
-      fares: { tram: 10, trolley: 10, bus: 20, metro: 10 },
+      fares: { tram: 10, trolley: 10, bus: 25, metro: 10 },
       passes: { weeklyPrice: 100, monthlyPrice: 410, covers: ['tram'], weeklyType: 'rolling', monthlyType: 'calendar' },
       routes: defaultRoutes(),
       ecoRoute: 'auto',
@@ -59,6 +95,7 @@ export function defaultSettings() {
     bank: { pct: 30, weeklyGoal: 700, monthlyGoal: 3000, baseline: 'carFull', monthlyBudget: 0, rate: 0, goalName: '', goalAmount: 0 },
     misc: { trafficFactor: 1.6, ptSlowPct: 0 },
     ui: { theme: 'dark' },
+    rev: DEFAULTS_REV,
   };
 }
 
@@ -93,7 +130,7 @@ const SETTINGS_SCHEMA = {
     parkingPerHour: N(0, 2000), parkingHours: N(0, 24), driveMin: N(1, 600), parkWalkMin: N(0, 120),
     fixedMonthly: N(0, 1e6), capacity: N(1, 9, true), winter: B(), winterExtraPct: N(0, 100), trafficFuelPct: N(0, 100), includeWear: B(), freeParkWalkMin: N(0, 60),
   },
-  taxi: { price: N(0, 20000), waitMin: N(0, 120), rideMin: N(1, 600), capacity: N(1, 8, true) },
+  taxi: { price: N(0, 20000), waitMin: N(0, 120), rideMin: N(1, 600), capacity: N(1, 8, true), tariff: S(24), tariffs: { t: 'tariffs' }, src: S(60) },
   transit: {
     fares: { tram: N(0, 1000), trolley: N(0, 1000), bus: N(0, 1000), metro: N(0, 1000) },
     passes: { weeklyPrice: N(0, 20000), monthlyPrice: N(0, 50000), covers: SET(FARE_MODES), weeklyType: E(['rolling', 'calendar']), monthlyType: E(['calendar', 'rolling30']) },
@@ -106,6 +143,7 @@ const SETTINGS_SCHEMA = {
   bank: { pct: N(0, 100), weeklyGoal: N(0, 1e7), monthlyGoal: N(0, 1e7), baseline: E(['carFull', 'carCash']), monthlyBudget: N(0, 1e7), rate: N(0, 100), goalName: S(60), goalAmount: N(0, 1e9) },
   misc: { trafficFactor: N(1, 4), ptSlowPct: N(0, 300) },
   ui: { theme: E(['dark', 'light', 'system']) },
+  rev: N(0, 1000, true),
 };
 
 const ROUTE_LIMIT = 12, SEG_LIMIT = 6;
@@ -150,6 +188,8 @@ function normField(spec, value, def, path, warn) {
       return [...new Set(value.map((x) => Math.round(toNum(x, -1))).filter((x) => x >= 0 && x <= 6))].sort();
     case 'routes':
       return normRoutes(value, def, path, warn);
+    case 'tariffs':
+      return normTariffs(value, def, path, warn);
     default:
       return def;
   }
@@ -167,9 +207,9 @@ function normObject(schema, value, def, path, warn) {
   return out;
 }
 
-const SEG_SCHEMA = { mode: E(SEG_MODES), line: S(12), walkMin: N(0, 120), waitMin: N(0, 120), rideMin: N(0, 600), price: N(0, 20000) };
-const SEG_DEFAULT = { mode: 'tram', line: '', walkMin: 5, waitMin: 8, rideMin: 15, price: 0 };
-const ROUTE_SCHEMA = { id: S(40), name: S(60), enabled: B(), confirmed: B(), walkEndMin: N(0, 120) };
+const SEG_SCHEMA = { mode: E(SEG_MODES), line: S(40), from: S(60), to: S(60), stops: N(0, 99, true), walkMin: N(0, 120), waitMin: N(0, 120), rideMin: N(0, 600), price: N(0, 20000) };
+const SEG_DEFAULT = { mode: 'tram', line: '', from: '', to: '', stops: 0, walkMin: 5, waitMin: 8, rideMin: 15, price: 0 };
+const ROUTE_SCHEMA = { id: S(40), name: S(60), enabled: B(), confirmed: B(), src: S(60), walkEndMin: N(0, 120) };
 
 function normRoutes(value, def, path, warn) {
   if (value === undefined) return def;
@@ -178,7 +218,7 @@ function normRoutes(value, def, path, warn) {
   const ids = new Set();
   value.slice(0, ROUTE_LIMIT).forEach((r, i) => {
     if (!r || typeof r !== 'object') { warn(`${path}[${i}]`, 'маршрут пропущено'); return; }
-    const base = normObject(ROUTE_SCHEMA, r, { id: `r${i + 1}`, name: `Маршрут ${i + 1}`, enabled: true, confirmed: false, walkEndMin: 5 }, `${path}[${i}]`, warn);
+    const base = normObject(ROUTE_SCHEMA, r, { id: `r${i + 1}`, name: `Маршрут ${i + 1}`, enabled: true, confirmed: false, src: '', walkEndMin: 5 }, `${path}[${i}]`, warn);
     let id = base.id.trim() || `r${i + 1}`;
     while (ids.has(id)) id = `${id}_`;
     ids.add(id);
@@ -190,9 +230,30 @@ function normRoutes(value, def, path, warn) {
   return out;
 }
 
+const TARIFF_SCHEMA = { id: S(24), name: S(30), price: N(0, 20000), note: S(60) };
+function normTariffs(value, def, path, warn) {
+  if (value === undefined) return def;
+  if (!Array.isArray(value)) { warn(path, 'очікувався список тарифів'); return def; }
+  const out = [], ids = new Set();
+  value.slice(0, 8).forEach((t, i) => {
+    if (!t || typeof t !== 'object') { warn(`${path}[${i}]`, 'тариф пропущено'); return; }
+    const x = normObject(TARIFF_SCHEMA, t, { id: `t${i + 1}`, name: '', price: 0, note: '' }, `${path}[${i}]`, warn);
+    if (!x.name.trim()) { warn(`${path}[${i}]`, 'тариф без назви — пропущено'); return; }
+    let id = x.id.trim() || `t${i + 1}`;
+    while (ids.has(id)) id = `${id}_`;
+    ids.add(id); x.id = id;
+    out.push(x);
+  });
+  return out;
+}
+
 export function normalizeSettings(raw, warn = () => {}) {
   const s = normObject(SETTINGS_SCHEMA, raw, defaultSettings(), 'settings', warn);
   s.benefit.persons = Math.min(s.benefit.persons, s.trip.passengers);
+  // Обраний тариф має існувати, а його ціна — збігатися з основною ціною таксі.
+  const sel = s.taxi.tariffs.find((t) => t.id === s.taxi.tariff);
+  if (!sel) s.taxi.tariff = '';
+  else if (sel.price !== s.taxi.price) sel.price = s.taxi.price;
   return s;
 }
 
@@ -254,10 +315,40 @@ function normToday(t) {
   };
 }
 
-export function normalizeState(raw, warn = () => {}) {
+// Оновлення старих збережених даних. Змінюємо лише ті значення, які людина не чіпала
+// (дорівнюють старим стартовим), — власні ціни й маршрути залишаються як були.
+const routeSig = (r) => JSON.stringify([r.id, r.name, r.walkEndMin, r.segments.map((g) => [g.mode, g.line, g.walkMin, g.waitMin, g.rideMin, g.price])]);
+export function migrateSettings(s, rawRev, notes = []) {
+  if (rawRev < 2) {
+    if (s.car.parkingPerHour === 15) { s.car.parkingPerHour = 18; notes.push('паркування 18 ₴/год'); }
+    if (s.transit.fares.bus === 20) { s.transit.fares.bus = 25; notes.push('маршрутка 25 ₴'); }
+    const old = legacyRoutesV1();
+    if (s.transit.routes.length === old.length && s.transit.routes.every((r, i) => routeSig(r) === routeSig(old[i]))) {
+      s.transit.routes = defaultRoutes();
+      if (s.transit.ecoRoute !== 'r1') s.transit.ecoRoute = 'auto';
+      if (!['taxi', 'r1'].includes(s.flex.there)) s.flex.there = 'taxi';
+      if (!['taxi', 'r1'].includes(s.flex.back)) s.flex.back = 'r1';
+      notes.push('маршрути з D-transport');
+    }
+  }
+  if (rawRev < 3) {
+    // Тарифів до версії 1.3 не було. Стара стартова ціна 160 ₴ → тариф Bolt 189 ₴; власна ціна лишається «своєю».
+    s.taxi.tariffs = defaultTariffs();
+    const bolt = s.taxi.tariffs[0];
+    if (s.taxi.price === 160) { s.taxi.tariff = bolt.id; syncTaxi(s); notes.push(`таксі Bolt ${bolt.price} ₴`); }
+    else s.taxi.tariff = s.taxi.price === bolt.price ? bolt.id : ''; // уже вписана ціна Bolt — обираємо тариф Bolt
+  }
+  s.rev = DEFAULTS_REV;
+  return notes;
+}
+
+export function normalizeState(raw, warn = () => {}, notes = []) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const st = defaultState();
   st.settings = normalizeSettings(src.settings, warn);
+  if (src.settings && typeof src.settings === 'object' && !Array.isArray(src.settings)) {
+    migrateSettings(st.settings, Math.floor(toNum(src.settings.rev, 1)), notes);
+  }
   st.calendar = normCalendar(src.calendar, warn);
   st.history = normHistory(src.history, warn);
   st.today = normToday(src.today);
@@ -273,10 +364,11 @@ export function normalizeState(raw, warn = () => {}) {
 export function loadState() {
   try {
     const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
-    if (!raw) return { state: defaultState(), fresh: true };
-    return { state: normalizeState(JSON.parse(raw)), fresh: false };
+    if (!raw) return { state: defaultState(), fresh: true, migrated: [] };
+    const migrated = [];
+    return { state: normalizeState(JSON.parse(raw), undefined, migrated), fresh: false, migrated };
   } catch {
-    return { state: defaultState(), fresh: true, error: true };
+    return { state: defaultState(), fresh: true, error: true, migrated: [] };
   }
 }
 
@@ -318,9 +410,10 @@ export function validateImport(text) {
   if (obj.history !== undefined && !Array.isArray(obj.history)) errors.push('Розділ history має бути списком.');
   if (obj.calendar !== undefined && (typeof obj.calendar !== 'object' || Array.isArray(obj.calendar) || obj.calendar === null)) errors.push('Розділ calendar має бути обʼєктом.');
   if (errors.length) return { ok: false, errors, warnings };
-  const state = normalizeState(obj, (path, msg) => warnings.push(`${path}: ${msg}`));
+  const migrated = [];
+  const state = normalizeState(obj, (path, msg) => warnings.push(`${path}: ${msg}`), migrated);
   return {
-    ok: true, errors, warnings, state,
+    ok: true, errors, warnings, state, migrated,
     summary: { trips: state.history.filter((r) => r.kind === 'trip').length, passes: state.history.filter((r) => r.kind === 'pass').length, days: Object.keys(state.calendar).length },
   };
 }

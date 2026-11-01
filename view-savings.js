@@ -17,7 +17,15 @@ export default {
       const a = t.dataset.act;
       if (a === 'log') openLogTrip(app, { date: app.today(), mode: 'eco' });
       else if (a === 'leak-go') {
-        if (t.dataset.do === 'pass') openPassPurchase(app);
+        if (t.dataset.do === 'pass') openPassPurchase(app, { type: t.dataset.type === 'monthly' ? 'monthly' : 'weekly' });
+        else if (t.dataset.do === 'eco-route') {
+          const id = t.dataset.id;
+          const r = app.s.transit.routes.find((x) => x.id === id);
+          if (!r) return;
+          const prev = { eco: app.s.transit.ecoRoute, mode: app.s.trip.defaultMode };
+          app.update((st) => { st.settings.transit.ecoRoute = id; if (st.settings.trip.defaultMode === 'zero') st.settings.trip.defaultMode = 'eco'; });
+          toast(`ECO — «${r.name}»${prev.mode === 'zero' ? '; робочі дні в календарі — ECO' : ''}`, { action: 'Повернути', onAction: () => app.update((st) => { st.settings.transit.ecoRoute = prev.eco; st.settings.trip.defaultMode = prev.mode; }) });
+        }
         else if (t.dataset.tab === 'savings') root.querySelector('#bank-t')?.scrollIntoView({ block: 'center' });
         else app.go(t.dataset.tab, { anchor: t.dataset.anchor || null });
       }
@@ -223,7 +231,7 @@ function leaksHTML(app) {
     ? `<ul class="leaks">${leaks.slice(0, 5).map((l) => `<li class="leak">
         <div class="leak-head"><b>−${E.fmtUAH(l.monthly)}</b><small>за 30 днів, ≈ ${E.fmtUAH(l.yearly)} за рік</small></div>
         <p>${esc(l.text)}</p>
-        ${l.action ? `<button type="button" class="btn small" data-act="leak-go" data-tab="${esc(l.action.tab || '')}" data-anchor="${esc(l.action.anchor || '')}" data-do="${esc(l.action.act || '')}">${esc(l.action.label)}</button>` : ''}
+        ${l.action ? `<button type="button" class="btn small" data-act="leak-go" data-tab="${esc(l.action.tab || '')}" data-anchor="${esc(l.action.anchor || '')}" data-do="${esc(l.action.act || '')}" data-id="${esc(l.action.id || '')}" data-type="${esc(l.action.type || '')}">${esc(l.action.label)}</button>` : ''}
       </li>`).join('')}</ul>`
     : '<p class="small muted" style="margin-top:8px">Витоків не знайдено: за ваших налаштувань план на 30 днів уже найекономніший.</p>';
   return `<section class="card" aria-labelledby="leaks-t">
