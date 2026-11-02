@@ -746,3 +746,7 @@ details.rc-edit[open] summary::after { content: " ▴"; }
 /* Запасний варіант для Safari без <dialog> */
 .sheet.no-dialog:not([open]) { display: none; }
 .sheet.no-dialog[open] { position: fixed; left: 0; right: 0; bottom: 0; z-index: 80; box-shadow: 0 0 0 100vmax rgba(2, 5, 10, .55); }
+
+/* Чек під сумою: з чого вона складається */
+.receipt { margin-top: 10px; font-size: 13.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; line-height: 1.4; }
+.receipt b { color: var(--ink); font-weight: 700; }

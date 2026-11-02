@@ -224,7 +224,7 @@ function html(app) {
   <h2 class="section-title" id="set-taxi">Таксі<small>Ціна — в один бік за одне авто на всіх.</small></h2>
   <div class="card">
     <div class="chips" role="radiogroup" aria-label="Тариф таксі">${s.taxi.tariffs.map((t) => `<button type="button" class="chip tariff" role="radio" aria-checked="${t.id === s.taxi.tariff}" data-act="tariff" data-id="${esc(t.id)}">${esc(t.name)}<b>${E.fmtUAH(t.price)}</b></button>`).join('')}</div>
-    <p class="hint">${taxiSel ? `${esc(taxiSel.name)} — ${esc(taxiSel.note)}. ` : 'Своя ціна — або оберіть тариф. '}Ціни ${esc(s.taxi.src || 'Bolt')}: тоді авто були недоступні; удень, у дощ і в години пік ціна змінюється.</p>
+    <p class="hint">${taxiSel ? `${esc(taxiSel.name)} — ${esc(taxiSel.note)}. ` : 'Своя ціна — або оберіть тариф. '}Ціни в один бік за авто на всіх: ${esc(s.taxi.src || 'Bolt')}. Удень, у дощ і в години пік ціна змінюється — оновлюйте, коли бачите іншу.</p>
     <div class="grid-2" style="margin-top:12px">
       ${rr(numField({ bind: 'taxi.price', label: taxiSel ? `${taxiSel.name} в один бік` : 'Поїздка в один бік', value: s.taxi.price, unit: '₴', max: 20000, assumption: true }))}
       ${numField({ bind: 'taxi.capacity', label: 'Місць у таксі', value: s.taxi.capacity, unit: 'ос.', min: 1, max: 8, int: true })}

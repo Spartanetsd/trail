@@ -528,7 +528,7 @@ test('Тариф і основна ціна таксі змінюються ра
 test('Оновлення до 1.3: таксі 160 → Bolt 189, своя ціна лишається', () => {
   const n1 = [], a = normalizeState({ settings: { taxi: { price: 160, waitMin: 7, rideMin: 20, capacity: 4 } } }, undefined, n1);
   eq(a.settings.taxi.price, 189); eq(a.settings.taxi.tariff, 'bolt'); ok(n1.includes('таксі Bolt 189 ₴'), n1.join());
-  eq(a.settings.taxi.tariffs.map((t) => t.price).join(','), '189,199,209,229,259');
+  eq(a.settings.taxi.tariffs.map((t) => t.price).join(','), '189,299,209,229,259');
   const b = normalizeState({ settings: { taxi: { price: 175 } } }, undefined, []);
   eq(b.settings.taxi.price, 175); eq(b.settings.taxi.tariff, '');
   const b2 = normalizeState({ settings: { taxi: { price: 189 } } }, undefined, []);
@@ -536,18 +536,69 @@ test('Оновлення до 1.3: таксі 160 → Bolt 189, своя цін�
   const c = normalizeState({ settings: { rev: 3, taxi: { price: 210, tariff: 'bolt', tariffs: [{ id: 'bolt', name: 'Bolt', price: 210, note: '' }] } } }, undefined, []);
   eq(c.settings.taxi.price, 210); eq(c.settings.taxi.tariffs.length, 1);
 });
-test('Підказка тарифу: поспіх — Priority +10 ₴, багаж — Comfort +40 ₴', () => {
+test('Підказка тарифу: лише за невеликої доплати — Comfort +40 ₴ так, Priority +110 ₴ ні', () => {
   const s = S();
-  const h = E.taxiTariffTip(s, { hurry: true });
-  eq(h.tariff.id, 'priority'); near(h.extra, 10, 1e-9);
+  eq(E.taxiTariffTip(s, { hurry: true }), null, 'Priority 299 ₴ — доплата 110 ₴ завелика для підказки');
+  const cheapPr = S((x) => { x.taxi.tariffs.find((t) => t.id === 'priority').price = 219; });
+  const h = E.taxiTariffTip(cheapPr, { hurry: true });
+  eq(h.tariff.id, 'priority'); near(h.extra, 30, 1e-9);
   const l = E.taxiTariffTip(s, { luggage: true });
   eq(l.tariff.id, 'comfort'); near(l.extra, 40, 1e-9);
   eq(E.taxiTariffTip(s, {}), null);
-  eq(E.taxiTariffTip(S((x) => { x.taxi.tariff = 'priority'; x.taxi.price = 199; }), { hurry: true }), null, 'вже Priority');
-  near(E.taxiTariffTip(S((x) => { x.trip.passengers = 5; }), { hurry: true }).extra, 20, 1e-9, 'два авто');
+  eq(E.taxiTariffTip(S((x) => { x.taxi.tariff = 'comfort'; x.taxi.price = 229; }), { luggage: true }), null, 'вже Comfort');
+  near(E.taxiTariffTip(S((x) => { x.trip.passengers = 5; }), { luggage: true }).extra, 80, 1e-9, 'два авто');
   const r = rec(s, { tired: true, badWeather: true, luggage: true });
   eq(r.best.key, 'taxi|taxi');
   ok(r.explanation.notes.some((n) => /Comfort/.test(n.text)), 'немає поради про Comfort');
+});
+
+/* ── v1.4.1: однакова основа для порівняння, чек суми, Bolt 02.11 ── */
+test('Чек авто: пальне 113 + знос 42 + паркування 108 = 263 ₴ туди й назад', () => {
+  const r = rec(S());
+  const c = E.costReceipt(r.modes.auto, S());
+  eq(c.items.map((x) => `${x.label} ${x.value}`).join(' + '), 'пальне 113 + знос 42 + паркування 108');
+  eq(c.total, 263); ok(c.roundTrip);
+  const one = E.costReceipt(rec(S(), { roundTrip: false }).modes.auto, S());
+  eq(one.items.map((x) => x.value).join('+'), '56+21+108'); eq(one.total, 185);
+  const cash = E.costReceipt(rec(S((x) => { x.car.includeWear = false; })).modes.auto, S((x) => { x.car.includeWear = false; }));
+  eq(cash.items.map((x) => x.label).join(','), 'пальне,паркування'); eq(cash.total, 221);
+});
+test('Чек таксі й ГТ: туди + назад, однакова основа з Bolt (189 в один бік)', () => {
+  const r = rec(S());
+  const t = E.costReceipt(r.modes.taxi, S());
+  eq(t.items.map((x) => `${x.label} ${x.value}`).join(' + '), 'туди 189 + назад 189'); eq(t.total, 378);
+  const c = E.costReceipt(r.modes.comfort, S());
+  eq(c.items.map((x) => x.value).join('+'), '50+189'); eq(c.total, 239);
+  eq(E.costReceipt(rec(S(), { roundTrip: false }).modes.taxi, S()).items.length, 1);
+});
+test('Округлення частин чека завжди сходиться з сумою', () => {
+  for (const v of [[10.4, 10.4], [0.4, 0.4, 0.4], [112.6188, 42, 108], [56.3094, 21, 108], [33.33, 33.33, 33.34], [0.5, 0.5]]) {
+    const r = E.roundParts(v);
+    eq(r.parts.reduce((a, b) => a + b, 0), r.total, `частини ${v}`);
+    eq(r.total, Math.round(v.reduce((a, b) => a + b, 0) + 1e-9));
+    ok(r.parts.every((p, i) => Math.abs(p - v[i]) < 1), 'частина відійшла більше ніж на 1');
+  }
+});
+test('Пояснення порівнюють «туди й назад», а не «за день»', () => {
+  const r = rec(S(), { tired: true, badWeather: true });
+  const all = [...r.explanation.reasons.map((x) => x.text), r.explanation.tradeoff || '', ...r.explanation.notes.map((n) => n.text)].join(' | ');
+  ok(!/за день/.test(all), all);
+  ok(/туди й назад/.test(all), all);
+  const car = rec(S((x) => { x.weights = { cost: 10, comfort: 10, speed: 70, reliability: 10 }; }), { badWeather: true });
+  if (car.best.isCar) ok(car.explanation.notes.every((n) => !/зупинках/.test(n.text)), 'для авто згадано зупинки');
+});
+test('Оновлення до 1.4.1: Priority 199 → 299 ₴, своя ціна Priority лишається', () => {
+  const t = (p) => ({ price: 189, waitMin: 7, rideMin: 20, capacity: 4, tariff: 'bolt', src: 'Bolt, 01.11.2026, 05:01', tariffs: [{ id: 'bolt', name: 'Bolt', price: 189, note: '' }, { id: 'priority', name: 'Priority', price: p, note: '' }] });
+  const n1 = [], a = normalizeState({ settings: { rev: 3, taxi: t(199) } }, undefined, n1);
+  eq(a.settings.taxi.tariffs[1].price, 299); ok(n1.includes('Priority 299 ₴'), n1.join()); eq(a.settings.taxi.src, 'Bolt, 02.11.2026, 05:03');
+  eq(a.settings.taxi.price, 189, 'обраний Bolt не змінюється');
+  const b = normalizeState({ settings: { rev: 3, taxi: t(249) } }, undefined, []);
+  eq(b.settings.taxi.tariffs[1].price, 249);
+  const sel = { ...t(199), tariff: 'priority', price: 199 };
+  const c = normalizeState({ settings: { rev: 3, taxi: sel } }, undefined, []);
+  eq(c.settings.taxi.price, 299, 'обраний Priority — основна ціна теж 299');
+  const d = []; normalizeState({ settings: { rev: 4, taxi: t(199) } }, undefined, d);
+  ok(!d.includes('Priority 299 ₴'), 'нові дані не чіпаємо');
 });
 
 /* ── v1.4: нова назва MOBILITY TRAIL ── */

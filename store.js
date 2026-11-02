@@ -9,17 +9,18 @@ export const SCHEMA = 'mobility-trail';
 // й приймати старі резервні копії; після перенесення старі записи видаляються.
 const LEGACY = { prefix: 'mobility-zero:', key: 'mobility-zero:v1', schema: 'mobility-zero', mode: 'zero' };
 export const SCHEMA_VERSION = 1;
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.4.1';
 // Ревізія стартових значень. Коли вона зростає, збережені дані з незмінними старими значеннями оновлюються.
-export const DEFAULTS_REV = 3;
+export const DEFAULTS_REV = 4;
 export const ROUTES_SOURCE = 'D-transport, 01.11.2026';
-export const TAXI_SOURCE = 'Bolt, 01.11.2026, 05:01';
+export const TAXI_SOURCE = 'Bolt, 02.11.2026, 05:03';
 
-// Тарифи таксі в один бік (скріншоти Bolt користувача; «Send» — доставка посилок, для поїздок не потрібен).
+// Тарифи таксі в один бік (скріншоти Bolt користувача 01–02.11.2026; «Send» — доставка посилок, для поїздок не потрібен).
+// Pet — з 01.11 (02.11 його не було видно на скріні).
 export function defaultTariffs() {
   return [
     { id: 'bolt', name: 'Bolt', price: 189, note: 'звичайні поїздки' },
-    { id: 'priority', name: 'Priority', price: 199, note: 'авто знайдуть швидше' },
+    { id: 'priority', name: 'Priority', price: 299, note: 'авто знайдуть швидше' },
     { id: 'pet', name: 'Pet', price: 209, note: 'поїздки з тваринами' },
     { id: 'comfort', name: 'Comfort', price: 229, note: 'просторіші авто' },
     { id: 'business', name: 'Business', price: 259, note: 'бізнес-клас' },
@@ -340,6 +341,17 @@ export function migrateSettings(s, rawRev, notes = []) {
     const bolt = s.taxi.tariffs[0];
     if (s.taxi.price === 160) { s.taxi.tariff = bolt.id; syncTaxi(s); notes.push(`таксі Bolt ${bolt.price} ₴`); }
     else s.taxi.tariff = s.taxi.price === bolt.price ? bolt.id : ''; // уже вписана ціна Bolt — обираємо тариф Bolt
+  }
+  if (rawRev >= 3 && rawRev < 4) {
+    // Bolt, 02.11.2026: Priority подорожчав 199 → 299 ₴. Змінюємо, лише якщо ціну не правили вручну.
+    const pr = s.taxi.tariffs.find((t) => t.id === 'priority');
+    if (pr && pr.price === 199) {
+      const before = taxiSnapshot(s);
+      pr.price = 299;
+      syncTaxi(s, before);
+      notes.push('Priority 299 ₴');
+    }
+    if (s.taxi.src === 'Bolt, 01.11.2026, 05:01') s.taxi.src = TAXI_SOURCE;
   }
   s.rev = DEFAULTS_REV;
   return notes;

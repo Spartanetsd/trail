@@ -1,7 +1,7 @@
 // MOBILITY TRAIL — sw.js
 // Офлайн-кеш. Після будь-яких змін у файлах збільште VERSION — інакше телефони триматимуть стару версію.
 
-const VERSION = 'trail-1.4.0';
+const VERSION = 'trail-1.4.1';
 // Кеші попередньої назви застосунку видаляються під час активації.
 const OLD_PREFIXES = ['trail-', 'mz-'];
 const ASSETS = [

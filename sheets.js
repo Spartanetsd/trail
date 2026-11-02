@@ -60,13 +60,21 @@ export function legStrip(leg, s) {
   return `<div class="strip" role="img" aria-label="${esc(cap(aria.join(', ')))}">${parts.join('<span class="strip-sep" aria-hidden="true">›</span>')}</div>`;
 }
 
+// Чек під сумою: з чого вона складається, щоб було видно, що за що (і що таксі — ціна в один бік).
+export function receiptLine(o, s) {
+  const r = E.costReceipt(o, s);
+  if (!r || r.items.length < 2) return '';
+  const txt = r.items.map((x, i) => `${i ? x.label : cap(x.label)} ${E.fmtUAH(x.value)}`).join(' + ');
+  return `<p class="receipt">${esc(txt)} = <b>${E.fmtUAH(r.total)}</b></p>`;
+}
+
 // Головна інструкція: на яку зупинку йти і в які номери сідати; для таксі — тариф, для авто — паркування.
 export function boardLines(leg, s = null, st = null) {
   if (!leg) return '';
   if (leg.kind === 'taxi' && s) {
     const tip = E.taxiTariffTip(s, st || E.DEFAULT_STATE);
     return `<p class="board">${icon('taxi')}<span><b>${esc(leg.tariff ? leg.tariff.name : 'Таксі')}</b> · подача ≈${E.fmtMin(leg.wait)} · ${E.fmtUAH(leg.cost)} в один бік${leg.vehicles > 1 ? ` (${leg.vehicles} авто)` : ''}</span></p>`
-      + (tip ? `<p class="board first">${icon('spark')}<span>${st?.hurry ? 'Поспішаєте?' : 'З багажем?'} Тариф <b>${esc(tip.tariff.name)}</b> лише на ${E.fmtGrn(tip.extra)} дорожчий — ${esc(tip.why)}</span></p>` : '');
+      + (tip ? `<p class="board first">${icon('spark')}<span>${st?.hurry ? 'Поспішаєте?' : 'З багажем?'} Тариф <b>${esc(tip.tariff.name)}</b>: +${E.fmtGrn(tip.extra)} за поїздку, зате ${esc(tip.why)}</span></p>` : '');
   }
   if (leg.kind === 'car' && s) {
     const veh = E.vehicles(s.trip.passengers, s.car.capacity);
@@ -102,7 +110,7 @@ function routeHTML(app, o) {
   const mode = modeOf(rec, o);
   let h = `<div class="trip-head"><div class="row wrap">${badge(mode)}${o.unconfirmed ? '<span class="tag-approx">орієнтовно</span>' : ''}</div>
     <h3>${esc(o.title)}</h3>
-    <p class="muted small">${E.fmtMin(o.oneWay)} в один бік · ${E.fmtUAH(o.cost.decision)} ${rt ? 'за день' : 'за поїздку'}${P > 1 ? ` ${E.forGroup(P)}` : ''}${dep ? ` · вихід о <b>${dep.time}</b>, прибуття до ${dep.arrive}` : ''}</p></div>
+    <p class="muted small">${E.fmtMin(o.oneWay)} в один бік · ${E.fmtUAH(o.cost.decision)} ${rt ? 'туди й назад' : 'в один бік'}${P > 1 ? ` ${E.forGroup(P)}` : ''}${dep ? ` · вихід о <b>${dep.time}</b>, прибуття до ${dep.arrive}` : ''}</p></div>
   ${legSteps(app, o.there, o.spec.there, rec.ctx)}`;
   if (o.back) {
     // Дорога назад: ті самі номери у зворотному порядку, зупинки й поради — для напрямку додому.
@@ -151,7 +159,7 @@ function legSteps(app, leg, spec, ctx, sDir = null) {
     items.push(`<li class="step l-taxi"><span class="step-dot">${icon('taxi')}</span><div class="step-body">
       <b>${t ? `Викличте ${esc(t.name)}` : 'Викличте таксі'}: подача ≈${E.fmtMin(leg.wait)}</b>
       <small>У дорозі ≈${E.fmtMin(leg.ride)} · ${E.fmtUAH(leg.cost)} в один бік${leg.vehicles > 1 ? ` (${leg.vehicles} авто)` : ' за авто на всіх'}</small>
-      ${tip ? `<div class="alt-box"><p class="alt-title">Сьогодні може бути краще</p><div class="alt v-take"><span class="alt-lines"><span class="line l-walk">${esc(tip.tariff.name)}</span></span><span>+${E.fmtGrn(tip.extra)} за поїздку — ${esc(tip.why)}</span></div></div>` : ''}
+      ${tip ? `<div class="alt-box"><p class="alt-title">Сьогодні може бути краще</p><div class="alt v-take"><span class="alt-lines"><span class="line l-walk">${esc(tip.tariff.name)}</span></span><span>+${E.fmtGrn(tip.extra)} за поїздку, зате ${esc(tip.why)}</span></div></div>` : ''}
       ${others.length ? `<small class="tariffs">Інші тарифи: ${others.map((x) => `${esc(x.name)} ${E.fmtUAH(x.price)}`).join(' · ')}</small>` : ''}
       <div class="step-actions">${copyButton(app, 'taxi')}<button type="button" class="link-btn" data-act="go-taxi">Змінити тариф</button></div>
     </div></li>`);
@@ -266,10 +274,11 @@ function morningHTML(app) {
     ${boardLines(best.there, app.s, flags)}
     ${backLine(best)}
     <div class="pass-metrics">
-      <div class="metric"><small>Вартість ${rt ? 'за день' : 'поїздки'}</small><b>${E.fmtUAH(best.cost.decision)}</b></div>
+      <div class="metric"><small>${rt ? 'Туди й назад' : 'В один бік'}</small><b>${E.fmtUAH(best.cost.decision)}</b></div>
       <div class="metric"><small>Час в один бік</small><b>${E.fmtMin(best.oneWay)}</b></div>
       <div class="metric"><small>Вихід о</small><b>${dep ? dep.time : '—'}</b></div>
     </div>
+    ${receiptLine(best, app.s)}
     ${dep ? `<p class="small muted" style="margin-top:8px">Прибуття до ${dep.arrive}, запас ${dep.buffer} хв на непередбачене.</p>` : ''}
   </div>
   <div class="card flat">
@@ -285,7 +294,7 @@ function morningHTML(app) {
     const dc = a.cost.decision - best.cost.decision, dm = a.minutes - best.minutes;
     html += `<div class="card flat"><div class="card-sub">Найкраща альтернатива</div>
       <div class="row between" style="margin-top:6px"><div><div class="row">${badge(rec.altMode)}<b>${esc(a.title)}</b></div>
-      <p class="small muted" style="margin-top:4px">${E.fmtUAH(a.cost.decision)}, ${E.fmtMin(a.oneWay)} в один бік. ${dc >= 1 ? `Дорожче на ${E.fmtGrn(dc)}` : dc <= -1 ? `Дешевше на ${E.fmtGrn(-dc)}` : 'Та сама ціна'}${Math.abs(dm) >= 1 ? `, ${dm > 0 ? 'довше' : 'швидше'} на ${E.fmtMin(Math.abs(dm))} ${rt ? 'за день' : ''}` : ''}.</p></div>
+      <p class="small muted" style="margin-top:4px">${E.fmtUAH(a.cost.decision)} ${rt ? 'туди й назад' : 'в один бік'}, ${E.fmtMin(a.oneWay)} в один бік. ${dc >= 1 ? `Дорожче на ${E.fmtGrn(dc)}` : dc <= -1 ? `Дешевше на ${E.fmtGrn(-dc)}` : 'Та сама ціна'}${Math.abs(dm) >= 1 ? `, ${dm > 0 ? 'довше' : 'швидше'} на ${E.fmtMin(Math.abs(dm))} ${rt ? 'туди й назад' : ''}`.trimEnd() : ''}.</p></div>
       <div class="rank-score"><b>${Math.round(a.total)}</b><small>балів</small></div></div></div>`;
   }
   html += `<button type="button" class="btn block" data-act="route">${icon('route')}Маршрут покроково</button>
@@ -335,7 +344,7 @@ function altsHTML(app, open) {
     return `<li class="rank-item${i === 0 ? ' top' : ''}">
       <button type="button" class="rank-btn" data-act="toggle" data-key="${esc(o.key)}" aria-expanded="${isOpen}">
         <span class="rank-pos">${i + 1}</span>
-        <span class="rank-main"><b>${esc(E.MODE_INFO[it.mode].code)}${isBest ? ' <span class="badge-best">найкраще</span>' : ''}</b><small>${esc(o.title)}, ${E.fmtUAH(o.cost.decision)}, ${E.fmtMin(o.oneWay)} в один бік</small></span>
+        <span class="rank-main"><b>${esc(E.MODE_INFO[it.mode].code)}${isBest ? ' <span class="badge-best">найкраще</span>' : ''}</b><small>${esc(o.title)} · ${E.fmtUAH(o.cost.decision)} ${rt ? 'туди й назад' : 'в один бік'} · ${E.fmtMin(o.oneWay)} в один бік</small></span>
         <span class="rank-score"><b>${Math.round(o.total)}</b><small>балів</small></span>
       </button>
       ${isOpen ? `<div class="contrib">

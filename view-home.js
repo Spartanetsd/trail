@@ -4,7 +4,7 @@
 import * as E from './engine.js';
 import { esc, icon, countUp, humanDate, isIOS, isStandalone, deviceFlag } from './ui.js';
 import { scoreRing } from './charts.js';
-import { badge, modeOf, legStrip, boardLines, backLine, openMorning, openAlternatives, openRoute, openLogTrip, signed } from './sheets.js';
+import { badge, modeOf, legStrip, boardLines, backLine, receiptLine, openMorning, openAlternatives, openRoute, openLogTrip, signed } from './sheets.js';
 import { TONE_ICON } from './assistant.js';
 
 let issued = false;
@@ -101,10 +101,11 @@ function html(app) {
       ${boardLines(best.there, s, rec.ctx.state)}
       ${backLine(best)}
       <div class="pass-metrics">
-        <div class="metric"><small>Орієнтовний час</small><b>${E.fmtMin(best.oneWay)}</b></div>
-        <div class="metric"><small>Вартість ${forWhom(s.trip.passengers)}</small><b data-count="${best.cost.decision.toFixed(2)}" data-suffix=" ₴">${E.fmtUAH(best.cost.decision)}</b></div>
+        <div class="metric"><small>Час в один бік</small><b>${E.fmtMin(best.oneWay)}</b></div>
+        <div class="metric"><small>${rt ? 'Туди й назад' : 'В один бік'} ${forWhom(s.trip.passengers)}</small><b data-count="${best.cost.decision.toFixed(2)}" data-suffix=" ₴">${E.fmtUAH(best.cost.decision)}</b></div>
         ${third}
       </div>
+      ${receiptLine(best, s)}
       <p class="pass-why">${icon('spark')}<span>${esc(why)}</span></p>
     </div>
     <div class="pass-stub">

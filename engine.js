@@ -2,7 +2,7 @@
 // Розрахунковий рушій: без DOM і без сховища, тож його можна перевіряти тестами.
 // Одиниці: гроші — гривні (₴), час — хвилини, відстань — кілометри, пальне — літри.
 
-export const ENGINE_VERSION = '1.4.0';
+export const ENGINE_VERSION = '1.4.1';
 
 /* ───────────────────────── Числа ───────────────────────── */
 
@@ -292,7 +292,8 @@ export function taxiTariffTip(s, st = DEFAULT_STATE) {
   const list = s.taxi.tariffs || [];
   const by = (id) => list.find((t) => t.id === id);
   const base = s.taxi.price;
-  const tip = (t, why) => (t && t.id !== s.taxi.tariff && t.price > base ? { tariff: t, extra: (t.price - base) * vehicles(s.trip.passengers, s.taxi.capacity), why } : null);
+  // Радимо лише, якщо доплата невелика (до 25 % ціни): Priority за +110 ₴ до 189 ₴ — уже не «трохи дорожче».
+  const tip = (t, why) => (t && t.id !== s.taxi.tariff && t.price > base && t.price <= base * 1.25 ? { tariff: t, extra: (t.price - base) * vehicles(s.trip.passengers, s.taxi.capacity), why } : null);
   return (st.hurry && tip(by('priority'), 'авто знайдуть швидше')) || (st.luggage && tip(by('comfort'), 'більше місця для речей')) || null;
 }
 
@@ -547,7 +548,7 @@ function explain(res, s) {
   let tradeoff = null;
   const cheapest = [...options].sort((a, b) => a.cost.decision - b.cost.decision)[0];
   const fastest = [...options].sort((a, b) => a.minutes - b.minutes)[0];
-  const period = st.roundTrip !== false ? 'за день' : 'за поїздку';
+  const period = st.roundTrip !== false ? 'туди й назад' : 'в один бік';
 
   if (cheapest && best.key === cheapest.key) reasons.push({ k: 'cost', text: `Найдешевший варіант: ${fmtGrn(best.cost.decision)} ${period}` });
   if (fastest && best.key === fastest.key) reasons.push({ k: 'speed', text: `Найшвидший: ${fmtMin(best.oneWay)} в один бік` });
@@ -581,7 +582,7 @@ function explain(res, s) {
       // Якщо альтернативу вже названо в причині, вдруге її не повторюємо.
       const than = reasons[0]?.text.includes(an) ? '' : `, ніж ${an}`;
       if (worst.k === 'cost') tradeoff = `Але дорожче на ${fmtGrn(best.cost.decision - alt.cost.decision)}${than}`;
-      if (worst.k === 'speed') tradeoff = `Але довше на ${fmtMin(best.minutes - alt.minutes)} за ${st.roundTrip !== false ? 'день' : 'поїздку'}${than}`;
+      if (worst.k === 'speed') tradeoff = `Але довше на ${fmtMin(best.minutes - alt.minutes)} ${period}${than}`;
       if (worst.k === 'comfort') tradeoff = `Але менш комфортно${than}`;
       if (worst.k === 'reliability') tradeoff = `Але вищий ризик запізнення${than}`;
     }
@@ -600,10 +601,37 @@ function explain(res, s) {
   if (multi) notes.push({ tone: 'good', text: `Не чекайте один номер: сідайте в перший із ${joinOr(multi.lines)} — очікування ≈${fmtMin(multi.wait)} замість ≈${fmtMin(multi.wait1)}` });
   if (ctx.eligible && s.benefit.enabled && best.legs.some((l) => l.kind === 'route')) notes.push({ tone: 'info', text: 'Пільгу враховано, бо ви підтвердили відповідність поїздки умовам' });
   if (ctx.passPersons > 0 && best.legs.some((l) => l.fares.some((f) => isCoverable(f, s.transit.passes.covers)))) notes.push({ tone: 'info', text: 'Діє придбаний проїзний: покриті посадки вже оплачені' });
-  if (st.badWeather && best.outdoor > 15) notes.push({ tone: 'warn', text: `Погана погода: близько ${fmtMin(best.outdoor)} пішки й на зупинках` });
+  if (st.badWeather && best.outdoor > 15) notes.push({ tone: 'warn', text: `Погана погода: близько ${fmtMin(best.outdoor)} ${best.legs.some((l) => l.kind === 'route') ? 'пішки й на зупинках' : 'пішки'}` });
   const tt = best.legs.some((l) => l.kind === 'taxi') ? taxiTariffTip(s, st) : null;
-  if (tt) notes.push({ tone: 'info', text: `Тариф ${tt.tariff.name} дорожчий лише на ${fmtGrn(tt.extra)} за поїздку — ${tt.why}` });
+  if (tt) notes.push({ tone: 'info', text: `Тариф ${tt.tariff.name}: +${fmtGrn(tt.extra)} за поїздку, зате ${tt.why}` });
   return { reasons, tradeoff, notes, close: !!res.close };
+}
+
+/* ───────────────────────── Чек: з чого складається сума ───────────────────────── */
+
+// Округлення частин так, щоб на екрані вони сходилися із загальною сумою (113 + 42 + 108 = 263).
+export function roundParts(values) {
+  const total = Math.round(values.reduce((a, b) => a + b, 0) + 1e-9);
+  const parts = values.map((v) => Math.floor(v + 1e-9));
+  let rest = total - parts.reduce((a, b) => a + b, 0);
+  const order = values.map((v, i) => [v - Math.floor(v + 1e-9), i]).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; k < order.length && rest > 0; k += 1, rest -= 1) parts[order[k][1]] += 1;
+  return { parts, total };
+}
+
+// Авто: пальне + знос + паркування за день; ГТ і таксі: туди + назад.
+export function costReceipt(o, s) {
+  if (!o) return null;
+  const c = o.cost;
+  let items;
+  if (o.isCar) {
+    items = [['пальне', c.fuel]];
+    if (s.car.includeWear && c.wear > 0.005) items.push(['знос', c.wear]);
+    if (c.parking > 0.005) items.push(['паркування', c.parking]);
+  } else if (o.back) items = [['туди', o.there.cost], ['назад', o.back.cost]];
+  else items = [['в один бік', o.there.cost]];
+  const { parts, total } = roundParts(items.map((x) => x[1]));
+  return { items: items.map((x, i) => ({ label: x[0], value: parts[i] })), total, roundTrip: !!o.back };
 }
 
 /* ───────────────────────── На зупинці: «а якщо першим прийде інший номер?» ───────────────────────── */

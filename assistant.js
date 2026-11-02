@@ -44,7 +44,7 @@ export function buildInsights({ s, rec, month, passPlan, bankNow, weekProjected,
   // Таксі сьогодні: інший тариф, якщо поспішаєте чи з багажем
   if (best && best.legs.some((l) => l.kind === 'taxi')) {
     const tt = taxiTariffTip(s, st);
-    if (tt) add('taxi-tariff', 'info', `${st.hurry ? 'Поспішаєте' : 'З багажем'}: тариф ${tt.tariff.name} дорожчий лише на ${fmtGrn(tt.extra)} за поїздку — ${tt.why}.`, 2.6);
+    if (tt) add('taxi-tariff', 'info', `${st.hurry ? 'Поспішаєте' : 'З багажем'}: тариф ${tt.tariff.name} — +${fmtGrn(tt.extra)} за поїздку, зате ${tt.why}.`, 2.6);
   }
 
   // На зупинці: не чекати один номер, і що робити, якщо першим прийде інший.
